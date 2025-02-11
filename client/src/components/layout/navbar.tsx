@@ -21,27 +21,31 @@ export function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16">
           <div className="flex">
-            <Link href="/">
-              <a className="flex-shrink-0 flex items-center">
-                <span className="text-xl font-bold text-primary">CivicWatch</span>
-              </a>
-            </Link>
+            <div className="flex-shrink-0 flex items-center">
+              <Link href="/">
+                <span className="text-xl font-bold text-primary cursor-pointer">CivicWatch</span>
+              </Link>
+            </div>
             <NavigationMenu className="ml-6">
               <NavigationMenuList>
                 <NavigationMenuItem>
-                  <Link href="/community-feed">
-                    <NavigationMenuLink className={navigationMenuTriggerStyle()}>
-                      Community Feed
-                    </NavigationMenuLink>
-                  </Link>
+                  <NavigationMenuLink asChild>
+                    <Link href="/community-feed">
+                      <span className={navigationMenuTriggerStyle()}>
+                        Community Feed
+                      </span>
+                    </Link>
+                  </NavigationMenuLink>
                 </NavigationMenuItem>
                 {user && !user.isOrganization && (
                   <NavigationMenuItem>
-                    <Link href="/user/report-issue">
-                      <NavigationMenuLink className={navigationMenuTriggerStyle()}>
-                        Report Issue
-                      </NavigationMenuLink>
-                    </Link>
+                    <NavigationMenuLink asChild>
+                      <Link href="/user/report-issue">
+                        <span className={navigationMenuTriggerStyle()}>
+                          Report Issue
+                        </span>
+                      </Link>
+                    </NavigationMenuLink>
                   </NavigationMenuItem>
                 )}
               </NavigationMenuList>

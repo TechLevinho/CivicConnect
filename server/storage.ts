@@ -1,11 +1,13 @@
-import { type User, type InsertUser, type Issue, type InsertIssue, type Comment, type InsertComment } from "@shared/schema";
+import { issues, users, comments, type User, type InsertUser, type Issue, type InsertIssue, type Comment, type InsertComment } from "@shared/schema";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export interface IStorage {
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  
+
   // Issue operations
   getIssue(id: number): Promise<Issue | undefined>;
   getIssues(): Promise<Issue[]>;
@@ -15,112 +17,93 @@ export interface IStorage {
   updateIssueStatus(id: number, status: string): Promise<Issue>;
   updateIssuePriority(id: number, priority: string): Promise<Issue>;
   assignIssue(id: number, orgId: number): Promise<Issue>;
-  
+
   // Comment operations
   getComments(issueId: number): Promise<Comment[]>;
   createComment(comment: InsertComment): Promise<Comment>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<number, User>;
-  private issues: Map<number, Issue>;
-  private comments: Map<number, Comment>;
-  private currentUserId: number;
-  private currentIssueId: number;
-  private currentCommentId: number;
-
-  constructor() {
-    this.users = new Map();
-    this.issues = new Map();
-    this.comments = new Map();
-    this.currentUserId = 1;
-    this.currentIssueId = 1;
-    this.currentCommentId = 1;
-  }
-
+export class DatabaseStorage implements IStorage {
   // User operations
   async getUser(id: number): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.currentUserId++;
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const [user] = await db.insert(users).values(insertUser).returning();
     return user;
   }
 
   // Issue operations
   async getIssue(id: number): Promise<Issue | undefined> {
-    return this.issues.get(id);
+    const [issue] = await db.select().from(issues).where(eq(issues.id, id));
+    return issue;
   }
 
   async getIssues(): Promise<Issue[]> {
-    return Array.from(this.issues.values());
+    return db.select().from(issues);
   }
 
   async getIssuesByUser(userId: number): Promise<Issue[]> {
-    return Array.from(this.issues.values()).filter(
-      (issue) => issue.userId === userId,
-    );
+    return db.select().from(issues).where(eq(issues.userId, userId));
   }
 
   async getIssuesByOrg(orgId: number): Promise<Issue[]> {
-    return Array.from(this.issues.values()).filter(
-      (issue) => issue.assignedOrgId === orgId,
-    );
+    return db.select().from(issues).where(eq(issues.assignedOrgId, orgId));
   }
 
   async createIssue(insertIssue: InsertIssue): Promise<Issue> {
-    const id = this.currentIssueId++;
-    const issue: Issue = { ...insertIssue, id, status: "reported", priority: "medium", assignedOrgId: null };
-    this.issues.set(id, issue);
+    const [issue] = await db.insert(issues).values({
+      ...insertIssue,
+      status: "reported",
+      priority: "medium",
+      assignedOrgId: null,
+    }).returning();
     return issue;
   }
 
   async updateIssueStatus(id: number, status: string): Promise<Issue> {
-    const issue = this.issues.get(id);
-    if (!issue) throw new Error("Issue not found");
-    const updated = { ...issue, status };
-    this.issues.set(id, updated);
-    return updated;
+    const [issue] = await db
+      .update(issues)
+      .set({ status })
+      .where(eq(issues.id, id))
+      .returning();
+    return issue;
   }
 
   async updateIssuePriority(id: number, priority: string): Promise<Issue> {
-    const issue = this.issues.get(id);
-    if (!issue) throw new Error("Issue not found");
-    const updated = { ...issue, priority };
-    this.issues.set(id, updated);
-    return updated;
+    const [issue] = await db
+      .update(issues)
+      .set({ priority })
+      .where(eq(issues.id, id))
+      .returning();
+    return issue;
   }
 
   async assignIssue(id: number, orgId: number): Promise<Issue> {
-    const issue = this.issues.get(id);
-    if (!issue) throw new Error("Issue not found");
-    const updated = { ...issue, assignedOrgId: orgId };
-    this.issues.set(id, updated);
-    return updated;
+    const [issue] = await db
+      .update(issues)
+      .set({ assignedOrgId: orgId })
+      .where(eq(issues.id, id))
+      .returning();
+    return issue;
   }
 
   // Comment operations
   async getComments(issueId: number): Promise<Comment[]> {
-    return Array.from(this.comments.values()).filter(
-      (comment) => comment.issueId === issueId,
-    );
+    return db.select().from(comments).where(eq(comments.issueId, issueId));
   }
 
   async createComment(insertComment: InsertComment): Promise<Comment> {
-    const id = this.currentCommentId++;
-    const comment: Comment = { ...insertComment, id };
-    this.comments.set(id, comment);
+    const [comment] = await db.insert(comments).values(insertComment).returning();
     return comment;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
