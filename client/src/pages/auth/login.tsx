@@ -10,23 +10,25 @@ import { useLocation } from "wouter";
 import { SiFacebook, SiGoogle, SiGithub } from "react-icons/si";
 
 const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
+  username: z.string().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),
 });
+
+type LoginFormData = z.infer<typeof loginSchema>;
 
 export default function Login() {
   const { toast } = useToast();
   const [, navigate] = useLocation();
 
-  const form = useForm<z.infer<typeof loginSchema>>({
+  const form = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: "",
+      username: "",
       password: "",
     },
   });
 
-  async function onSubmit(data: z.infer<typeof loginSchema>) {
+  async function onSubmit(data: LoginFormData) {
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -43,7 +45,7 @@ export default function Login() {
     } catch (error) {
       toast({
         title: "Error",
-        description: "Invalid email or password",
+        description: "Invalid username or password",
         variant: "destructive",
       });
     }
@@ -60,11 +62,11 @@ export default function Login() {
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
                 control={form.control}
-                name="email"
+                name="username"
                 render={({ field }) => (
                   <FormItem>
                     <FormControl>
-                      <Input placeholder="Email" className="h-11" {...field} />
+                      <Input placeholder="Username" className="h-11" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -87,23 +89,12 @@ export default function Login() {
                   </FormItem>
                 )}
               />
-              <div className="space-y-3 pt-2">
-                <Button 
-                  type="submit" 
-                  className="w-full h-11" 
-                  variant="outline"
-                  onClick={() => form.setValue("isOrganization", false)}
-                >
-                  Login as User
-                </Button>
-                <Button 
-                  type="submit" 
-                  className="w-full h-11 bg-primary text-white hover:bg-primary/90"
-                  onClick={() => form.setValue("isOrganization", true)}
-                >
-                  Login as Organization
-                </Button>
-              </div>
+              <Button 
+                type="submit" 
+                className="w-full h-11 bg-primary text-white hover:bg-primary/90"
+              >
+                Sign In
+              </Button>
             </form>
           </Form>
 
