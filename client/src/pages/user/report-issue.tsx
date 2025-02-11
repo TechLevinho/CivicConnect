@@ -37,7 +37,7 @@ export default function ReportIssue() {
       title: "",
       description: "",
       location: "",
-      coordinates: null,
+      coordinates: { lat: 0, lng: 0 }, // Initialize with default coordinates
       category: "",
       userId: 1, // TODO: Get actual user ID
       imageUrl: "",
@@ -178,7 +178,7 @@ export default function ReportIssue() {
                   <FormItem>
                     <FormLabel>Description</FormLabel>
                     <FormControl>
-                      <Textarea 
+                      <Textarea
                         placeholder="Detailed description of the issue"
                         className="min-h-[100px]"
                         {...field}
