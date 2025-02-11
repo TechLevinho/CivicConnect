@@ -11,6 +11,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { MapPin, Upload, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { Check, ChevronsUpDown } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 const categories = [
   "Damaged Road",
@@ -30,6 +34,12 @@ export default function ReportIssue() {
   const [isLocating, setIsLocating] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [locationOptions, setLocationOptions] = useState<Array<{
+    value: string;
+    label: string;
+    coordinates: { lat: number; lng: number };
+  }>>([]);
+  const [open, setOpen] = useState(false);
 
   const form = useForm({
     resolver: zodResolver(insertIssueSchema),
@@ -37,9 +47,9 @@ export default function ReportIssue() {
       title: "",
       description: "",
       location: "",
-      coordinates: { lat: 0, lng: 0 }, // Initialize with default coordinates
+      coordinates: { lat: 0, lng: 0 },
       category: "",
-      userId: 1, // TODO: Get actual user ID
+      userId: 1,
       imageUrl: "",
     },
   });
@@ -54,16 +64,27 @@ export default function ReportIssue() {
       const { latitude, longitude } = position.coords;
       form.setValue("coordinates", { lat: latitude, lng: longitude });
 
-      // Get address from coordinates using reverse geocoding
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`
+        `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&zoom=18&addressdetails=1`
       );
-      const data = await response.json();
-      form.setValue("location", data.display_name);
+      const mainLocation = await response.json();
+
+      const nearbyResponse = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${mainLocation.display_name}&format=json&limit=5`
+      );
+      const nearbyLocations = await nearbyResponse.json();
+
+      setLocationOptions(nearbyLocations.map((loc: any) => ({
+        value: loc.display_name,
+        label: loc.display_name,
+        coordinates: { lat: parseFloat(loc.lat), lng: parseFloat(loc.lon) }
+      })));
+
+      form.setValue("location", mainLocation.display_name);
 
       toast({
-        title: "Location detected",
-        description: "Your location has been automatically filled.",
+        title: "Locations found",
+        description: "Please select the correct address from the list or enter manually.",
       });
     } catch (error) {
       toast({
@@ -88,17 +109,9 @@ export default function ReportIssue() {
 
   async function onSubmit(data: any) {
     try {
-      // First upload the image if selected
       if (selectedImage) {
         const formData = new FormData();
         formData.append("image", selectedImage);
-        // TODO: Implement image upload endpoint
-        // const uploadRes = await fetch("/api/upload", {
-        //   method: "POST",
-        //   body: formData,
-        // });
-        // const { imageUrl } = await uploadRes.json();
-        // data.imageUrl = imageUrl;
       }
 
       const res = await fetch("/api/issues", {
@@ -194,17 +207,61 @@ export default function ReportIssue() {
                   control={form.control}
                   name="location"
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem className="flex flex-col">
                       <FormLabel>Location</FormLabel>
                       <div className="flex gap-2">
-                        <FormControl>
-                          <Input placeholder="Location of the issue" {...field} />
-                        </FormControl>
+                        <Popover open={open} onOpenChange={setOpen}>
+                          <PopoverTrigger asChild>
+                            <FormControl>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                className={cn(
+                                  "justify-between w-full",
+                                  !field.value && "text-muted-foreground"
+                                )}
+                              >
+                                {field.value
+                                  ? locationOptions.find((option) => option.value === field.value)?.label
+                                  : "Select location..."}
+                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </Button>
+                            </FormControl>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-full p-0">
+                            <Command>
+                              <CommandInput placeholder="Search location..." />
+                              <CommandEmpty>No location found.</CommandEmpty>
+                              <CommandGroup>
+                                {locationOptions.map((option) => (
+                                  <CommandItem
+                                    key={option.value}
+                                    value={option.value}
+                                    onSelect={() => {
+                                      form.setValue("location", option.value);
+                                      form.setValue("coordinates", option.coordinates);
+                                      setOpen(false);
+                                    }}
+                                  >
+                                    <Check
+                                      className={cn(
+                                        "mr-2 h-4 w-4",
+                                        field.value === option.value ? "opacity-100" : "opacity-0"
+                                      )}
+                                    />
+                                    {option.label}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                         <Button
                           type="button"
                           variant="outline"
                           onClick={getLocation}
                           disabled={isLocating}
+                          className="shrink-0"
                         >
                           {isLocating ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -214,6 +271,15 @@ export default function ReportIssue() {
                         </Button>
                       </div>
                       <FormMessage />
+                      {locationOptions.length === 0 && (
+                        <FormControl>
+                          <Input
+                            placeholder="Or enter location manually"
+                            {...field}
+                            className="mt-2"
+                          />
+                        </FormControl>
+                      )}
                     </FormItem>
                   )}
                 />
