@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -16,12 +16,14 @@ export const issues = pgTable("issues", {
   title: text("title").notNull(),
   description: text("description").notNull(),
   location: text("location").notNull(),
+  coordinates: json("coordinates").$type<{ lat: number; lng: number }>(),
   category: text("category").notNull(),
   status: text("status").notNull().default("reported"),
   priority: text("priority").notNull().default("medium"),
   userId: integer("user_id").notNull(),
   assignedOrgId: integer("assigned_org_id"),
   imageUrl: text("image_url"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const comments = pgTable("comments", {
@@ -43,6 +45,7 @@ export const insertIssueSchema = createInsertSchema(issues).pick({
   title: true,
   description: true,
   location: true,
+  coordinates: true,
   category: true,
   userId: true,
   imageUrl: true,
