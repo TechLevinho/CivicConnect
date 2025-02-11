@@ -224,19 +224,25 @@ export default function ReportIssue() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="w-full h-32 relative"
+                      className="w-full h-64 relative"
                       onClick={() => document.getElementById("image-upload")?.click()}
                     >
                       {imagePreview ? (
-                        <img
-                          src={imagePreview}
-                          alt="Preview"
-                          className="absolute inset-0 w-full h-full object-cover rounded-lg"
-                        />
+                        <div className="absolute inset-0 w-full h-full">
+                          <img
+                            src={imagePreview}
+                            alt="Preview"
+                            className="w-full h-full object-contain rounded-lg"
+                          />
+                          <div className="absolute inset-0 bg-black/5 rounded-lg" />
+                        </div>
                       ) : (
-                        <div className="flex flex-col items-center gap-2">
-                          <Upload className="h-8 w-8" />
-                          <span>Upload Photo</span>
+                        <div className="flex flex-col items-center gap-3">
+                          <Upload className="h-12 w-12 text-gray-400" />
+                          <span className="text-sm text-gray-600">Click to upload a photo of the issue</span>
+                          <span className="text-xs text-gray-400">
+                            Supported formats: JPG, PNG
+                          </span>
                         </div>
                       )}
                     </Button>
