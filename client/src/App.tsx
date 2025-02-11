@@ -10,6 +10,7 @@ import UserDashboard from "@/pages/user/dashboard";
 import ReportIssue from "@/pages/user/report-issue";
 import OrganizationDashboard from "@/pages/organization/dashboard";
 import CommunityFeed from "@/pages/community-feed";
+import { ProtectedRoute } from "./lib/protected-route";
 
 function Router() {
   return (
@@ -19,9 +20,13 @@ function Router() {
         <Route path="/" component={CommunityFeed} />
         <Route path="/auth/login" component={Login} />
         <Route path="/auth/register" component={Register} />
-        <Route path="/user/dashboard" component={UserDashboard} />
-        <Route path="/user/report-issue" component={ReportIssue} />
-        <Route path="/organization/dashboard" component={OrganizationDashboard} />
+        <ProtectedRoute path="/user/dashboard" component={UserDashboard} />
+        <ProtectedRoute path="/user/report-issue" component={ReportIssue} />
+        <ProtectedRoute 
+          path="/organization/dashboard" 
+          component={OrganizationDashboard} 
+          requireOrg
+        />
         <Route path="/community-feed" component={CommunityFeed} />
         <Route component={NotFound} />
       </Switch>
