@@ -1,9 +1,28 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session"; // Import session
+import dotenv from "dotenv"; // Import dotenv to load env variables
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { setupAuth } from "./auth";
 
+dotenv.config(); // Load .env file
+
 const app = express();
+
+// Session Middleware
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "your-default-secret-key",
+    resave: false,
+    saveUninitialized: true,
+    cookie: {
+      secure: process.env.NODE_ENV === "production", // Set secure cookies in production
+      httpOnly: true, // Prevent client-side access to cookies
+      maxAge: 1000 * 60 * 60 * 24, // 1 day
+    },
+  })
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 

@@ -1,131 +1,119 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
-import { SiFacebook, SiGoogle, SiGithub } from "react-icons/si";
+import { useState } from 'react';
+import { useLocation } from 'wouter';
+import { useToast } from "../../components/ui/use-toast";
 
-const loginSchema = z.object({
-  username: z.string().min(1, "Username is required"),
-  password: z.string().min(1, "Password is required"),
-});
+interface LoginResponse {
+  id: number;
+  username: string;
+  email: string;
+  isOrganization: boolean;
+}
 
-type LoginFormData = z.infer<typeof loginSchema>;
-
-export default function Login() {
+const LoginPage = () => {
   const { toast } = useToast();
-  const [, navigate] = useLocation();
+  const [, setLocation] = useLocation();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const form = useForm<LoginFormData>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: {
-      username: "",
-      password: "",
-    },
-  });
-
-  async function onSubmit(data: LoginFormData) {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    
     try {
-      const res = await fetch("/api/auth/login", {
+      const endpoint = isLoginMode ? "/api/auth/login" : "/api/auth/register";
+      const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ 
+          username,
+          password,
+          email: username // For registration only
+        }),
+        credentials: 'include'
       });
 
-      if (!res.ok) {
-        throw new Error("Invalid credentials");
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || (isLoginMode ? "Login failed" : "Registration failed"));
       }
 
-      const user = await res.json();
-      navigate(user.isOrganization ? "/organization/dashboard" : "/user/dashboard");
+      const user = await response.json() as LoginResponse;
+      
+      toast({
+        title: "Success",
+        description: isLoginMode ? "Logged in successfully" : "Registered successfully",
+      });
+
+      setLocation(user.isOrganization ? "/organization/dashboard" : "/user/dashboard");
     } catch (error) {
       toast({
         title: "Error",
-        description: "Invalid username or password",
+        description: error instanceof Error ? error.message : "An error occurred",
         variant: "destructive",
       });
+    } finally {
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center pb-4">
-          <CardTitle className="text-2xl font-bold text-primary">CivicReport</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="username"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormControl>
-                      <Input placeholder="Username" className="h-11" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormControl>
-                      <Input 
-                        type="password" 
-                        placeholder="Password" 
-                        className="h-11" 
-                        {...field} 
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <Button 
-                type="submit" 
-                className="w-full h-11 bg-primary text-white hover:bg-primary/90"
-              >
-                Sign In
-              </Button>
-            </form>
-          </Form>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-200" />
-            </div>
-            <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-gray-500">Or continue with</span>
-            </div>
+    <div className="flex flex-col items-center justify-center min-h-screen p-4">
+      <div className="w-full max-w-md">
+        <h1 className="text-2xl font-bold mb-6 text-center">
+          {isLoginMode ? "Login" : "Register"}
+        </h1>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-1">Username</label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full p-2 border rounded"
+              disabled={isLoading}
+              required
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium mb-1">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full p-2 border rounded"
+              disabled={isLoading}
+              required
+            />
           </div>
 
-          <div className="flex justify-center gap-4">
-            <Button variant="outline" size="icon" className="h-11 w-11">
-              <SiGoogle className="h-5 w-5" />
-            </Button>
-            <Button variant="outline" size="icon" className="h-11 w-11">
-              <SiFacebook className="h-5 w-5" />
-            </Button>
-            <Button variant="outline" size="icon" className="h-11 w-11">
-              <SiGithub className="h-5 w-5" />
-            </Button>
-          </div>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:opacity-50"
+          >
+            {isLoading ? "Processing..." : (isLoginMode ? "Login" : "Register")}
+          </button>
+        </form>
 
-          <div className="text-center text-sm">
-            <a href="/auth/register" className="text-primary hover:underline">
-              Sign up for an account
-            </a>
-          </div>
-        </CardContent>
-      </Card>
+        <p className="mt-4 text-center">
+          {isLoginMode ? "Don't have an account? " : "Already have an account? "}
+          <button
+            onClick={() => setIsLoginMode(!isLoginMode)}
+            className="text-blue-500 hover:underline"
+            disabled={isLoading}
+          >
+            {isLoginMode ? "Register" : "Login"}
+          </button>
+        </p>
+      </div>
     </div>
   );
-}
+};
+
+export default LoginPage;

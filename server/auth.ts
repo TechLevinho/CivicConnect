@@ -33,7 +33,7 @@ async function comparePasswords(supplied: string, stored: string) {
 
 export function setupAuth(app: Express) {
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.REPL_ID!,
+    secret: process.env.SESSION_SECRET!,
     resave: false,
     saveUninitialized: false,
     store: new PostgresSessionStore({ 
@@ -58,11 +58,18 @@ export function setupAuth(app: Express) {
     new LocalStrategy(async (username, password, done) => {
       try {
         const user = await storage.getUserByUsername(username);
-        if (!user || !(await comparePasswords(password, user.password))) {
+        if (!user) {
+          console.log(`Login failed: User ${username} not found`);
+          return done(null, false);
+        }
+        const passwordMatch = await comparePasswords(password, user.password);
+        if (!passwordMatch) {
+          console.log(`Login failed: Invalid password for user ${username}`);
           return done(null, false);
         }
         return done(null, user);
       } catch (error) {
+        console.error('Login error:', error);
         return done(error);
       }
     }),
@@ -80,8 +87,36 @@ export function setupAuth(app: Express) {
 
   app.post("/api/auth/register", async (req, res, next) => {
     try {
+      console.log('Registration attempt for username:', req.body.username);
+      
+      // Validate required fields
+      if (!req.body.username || !req.body.password || !req.body.email) {
+        console.log('Registration failed: Missing required fields');
+        return res.status(400).json({ 
+          message: "Username, password, and email are required" 
+        });
+      }
+
+      // Validate password strength
+      if (req.body.password.length < 6) {
+        console.log('Registration failed: Password too short');
+        return res.status(400).json({ 
+          message: "Password must be at least 6 characters long" 
+        });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(req.body.email)) {
+        console.log('Registration failed: Invalid email format');
+        return res.status(400).json({ 
+          message: "Invalid email format" 
+        });
+      }
+
       const existingUser = await storage.getUserByUsername(req.body.username);
       if (existingUser) {
+        console.log('Registration failed: Username already exists:', req.body.username);
         return res.status(400).json({ message: "Username already exists" });
       }
 
@@ -90,11 +125,16 @@ export function setupAuth(app: Express) {
         password: await hashPassword(req.body.password),
       });
 
+      console.log('User registered successfully:', user.username);
       req.login(user, (err) => {
-        if (err) return next(err);
+        if (err) {
+          console.error('Login after registration failed:', err);
+          return next(err);
+        }
         res.status(201).json(user);
       });
     } catch (error) {
+      console.error('Registration error:', error);
       next(error);
     }
   });
