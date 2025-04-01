@@ -1,336 +1,289 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import { insertIssueSchema } from "@shared/schema";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
-import { MapPin, Upload, Loader2 } from "lucide-react";
-import { useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command";
-import { cn } from "@/lib/utils";
-
-const categories = [
-  "Damaged Road",
-  "Garbage Overflow",
-  "Street Light Issue",
-  "Water Supply",
-  "Drainage Problem",
-  "Public Property Damage",
-  "Illegal Construction",
-  "Tree Hazard",
-  "Other",
-];
+import { useState, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { useToast } from "../../components/ui/use-toast";
+import "../../styles/main.css";
+import { Upload, X, MapPin } from "lucide-react";
 
 export default function ReportIssue() {
+  const navigate = useNavigate();
   const { toast } = useToast();
-  const [, navigate] = useLocation();
-  const [isLocating, setIsLocating] = useState(false);
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [locationOptions, setLocationOptions] = useState<Array<{
-    value: string;
-    label: string;
-    coordinates: { lat: number; lng: number };
-  }>>([]);
-  const [open, setOpen] = useState(false);
-
-  const form = useForm({
-    resolver: zodResolver(insertIssueSchema),
-    defaultValues: {
-      title: "",
-      description: "",
-      location: "",
-      coordinates: { lat: 0, lng: 0 },
-      category: "",
-      userId: 1,
-      imageUrl: "",
-    },
+  const [loading, setLoading] = useState(false);
+  const [photos, setPhotos] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [formData, setFormData] = useState({
+    title: "",
+    description: "",
+    location: "",
+    type: "general"
   });
 
-  const getLocation = async () => {
-    setIsLocating(true);
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setLoading(true);
+
     try {
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject);
-      });
+      // Simulating API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-      const { latitude, longitude } = position.coords;
-      form.setValue("coordinates", { lat: latitude, lng: longitude });
+      const newIssue = {
+        id: Date.now(),
+        ...formData,
+        photos: photos,
+        status: "open",
+        createdAt: new Date().toISOString(),
+        userId: "current-user"
+      };
 
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&zoom=18&addressdetails=1`
-      );
-      const mainLocation = await response.json();
-
-      const nearbyResponse = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${mainLocation.display_name}&format=json&limit=5`
-      );
-      const nearbyLocations = await nearbyResponse.json();
-
-      setLocationOptions(nearbyLocations.map((loc: any) => ({
-        value: loc.display_name,
-        label: loc.display_name,
-        coordinates: { lat: parseFloat(loc.lat), lng: parseFloat(loc.lon) }
-      })));
-
-      form.setValue("location", mainLocation.display_name);
-
-      toast({
-        title: "Locations found",
-        description: "Please select the correct address from the list or enter manually.",
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Could not detect location. Please enter manually.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLocating(false);
-    }
-  };
-
-  const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      setSelectedImage(file);
-      const reader = new FileReader();
-      reader.onload = (e) => setImagePreview(e.target?.result as string);
-      reader.readAsDataURL(file);
-    }
-  };
-
-  async function onSubmit(data: any) {
-    try {
-      if (selectedImage) {
-        const formData = new FormData();
-        formData.append("image", selectedImage);
-      }
-
-      const res = await fetch("/api/issues", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      });
-
-      if (!res.ok) throw new Error();
+      const existingIssues = JSON.parse(localStorage.getItem("issues") || "[]");
+      const updatedIssues = [...existingIssues, newIssue];
+      localStorage.setItem("issues", JSON.stringify(updatedIssues));
 
       toast({
         title: "Success",
-        description: "Issue reported successfully",
+        description: "Issue reported successfully!",
       });
+
+      // Reset form
+      setFormData({
+        title: "",
+        description: "",
+        location: "",
+        type: "general"
+      });
+      setPhotos([]);
+
       navigate("/user/dashboard");
     } catch (error) {
+      console.error("Error reporting issue:", error);
       toast({
         title: "Error",
-        description: "Failed to report issue",
+        description: "Failed to report issue. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setPhotos(prev => [...prev, event.target!.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleRemovePhoto = (index: number) => {
+    setPhotos(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleUseCurrentLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude } = position.coords;
+          setFormData(prev => ({
+            ...prev,
+            location: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+          }));
+          toast({
+            title: "Location Found",
+            description: "Your current location has been added",
+          });
+        },
+        () => {
+          toast({
+            title: "Error",
+            description: "Unable to get your location. Please enter it manually.",
+            variant: "destructive",
+          });
+        }
+      );
+    } else {
+      toast({
+        title: "Error",
+        description: "Geolocation is not supported by your browser",
         variant: "destructive",
       });
     }
-  }
+  };
 
   return (
-    <div className="container max-w-2xl mx-auto py-10">
-      <Card>
-        <CardHeader>
-          <CardTitle>Report a Civic Issue</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              <FormField
-                control={form.control}
-                name="title"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Title</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Brief title of the issue" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+    <div className="page-container">
+      <div className="form-container">
+        <h2 className="form-title">Report an Issue</h2>
+        
+        <form onSubmit={handleSubmit}>
+          {/* Title */}
+          <div className="form-group">
+            <label htmlFor="title" className="form-label">
+              Title
+            </label>
+            <input
+              type="text"
+              id="title"
+              name="title"
+              value={formData.title}
+              onChange={handleChange}
+              required
+              className="form-input"
+              placeholder="Enter issue title"
+            />
+          </div>
+
+          {/* Description */}
+          <div className="form-group">
+            <label htmlFor="description" className="form-label">
+              Description
+            </label>
+            <textarea
+              id="description"
+              name="description"
+              value={formData.description}
+              onChange={handleChange}
+              required
+              className="form-textarea"
+              rows={4}
+              placeholder="Describe the issue in detail"
+            />
+          </div>
+
+          {/* Location */}
+          <div className="form-group">
+            <label htmlFor="location" className="form-label">
+              Location
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                id="location"
+                name="location"
+                value={formData.location}
+                onChange={handleChange}
+                required
+                className="form-input pr-10"
+                placeholder="Enter issue location"
               />
+              <button 
+                type="button"
+                className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-blue-600"
+                onClick={handleUseCurrentLocation}
+              >
+                <MapPin className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">Enter location manually or click the location icon to use your current location</p>
+          </div>
 
-              <FormField
-                control={form.control}
-                name="category"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Category</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select issue category" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {categories.map((category) => (
-                          <SelectItem key={category} value={category}>
-                            {category}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+          {/* Issue Type */}
+          <div className="form-group">
+            <label htmlFor="type" className="form-label">
+              Issue Type
+            </label>
+            <select
+              id="type"
+              name="type"
+              value={formData.type}
+              onChange={handleChange}
+              className="form-select"
+            >
+              <option value="general">General Issue</option>
+              <option value="water_drainage">Waterlogging & Drainage Issues</option>
+              <option value="garbage">Garbage Overflow & Waste Management</option>
+              <option value="road">Road Maintenance & Potholes</option>
+              <option value="public_places">Unmaintained Public Places</option>
+              <option value="electricity">Streetlight & Electricity Issues</option>
+              <option value="water_supply">Broken Pipelines & Water Supply</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
 
-              <FormField
-                control={form.control}
-                name="description"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Description</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder="Detailed description of the issue"
-                        className="min-h-[100px]"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <div className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="location"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col">
-                      <FormLabel>Location</FormLabel>
-                      <div className="flex gap-2">
-                        <Popover open={open} onOpenChange={setOpen}>
-                          <PopoverTrigger asChild>
-                            <FormControl>
-                              <Button
-                                variant="outline"
-                                role="combobox"
-                                className={cn(
-                                  "justify-between w-full",
-                                  !field.value && "text-muted-foreground"
-                                )}
-                              >
-                                {field.value
-                                  ? locationOptions.find((option) => option.value === field.value)?.label
-                                  : "Select location..."}
-                                <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                              </Button>
-                            </FormControl>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-full p-0">
-                            <Command>
-                              <CommandInput placeholder="Search location..." />
-                              <CommandEmpty>No location found.</CommandEmpty>
-                              <CommandGroup>
-                                {locationOptions.map((option) => (
-                                  <CommandItem
-                                    key={option.value}
-                                    value={option.value}
-                                    onSelect={() => {
-                                      form.setValue("location", option.value);
-                                      form.setValue("coordinates", option.coordinates);
-                                      setOpen(false);
-                                    }}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        "mr-2 h-4 w-4",
-                                        field.value === option.value ? "opacity-100" : "opacity-0"
-                                      )}
-                                    />
-                                    {option.label}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={getLocation}
-                          disabled={isLocating}
-                          className="shrink-0"
-                        >
-                          {isLocating ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <MapPin className="h-4 w-4" />
-                          )}
-                        </Button>
-                      </div>
-                      <FormMessage />
-                      {locationOptions.length === 0 && (
-                        <FormControl>
-                          <Input
-                            placeholder="Or enter location manually"
-                            {...field}
-                            className="mt-2"
-                          />
-                        </FormControl>
-                      )}
-                    </FormItem>
-                  )}
-                />
-
-                <div className="space-y-2">
-                  <FormLabel>Photo Evidence</FormLabel>
-                  <div className="grid gap-4">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full h-64 relative"
-                      onClick={() => document.getElementById("image-upload")?.click()}
-                    >
-                      {imagePreview ? (
-                        <div className="absolute inset-0 w-full h-full">
-                          <img
-                            src={imagePreview}
-                            alt="Preview"
-                            className="w-full h-full object-contain rounded-lg"
-                          />
-                          <div className="absolute inset-0 bg-black/5 rounded-lg" />
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center gap-3">
-                          <Upload className="h-12 w-12 text-gray-400" />
-                          <span className="text-sm text-gray-600">Click to upload a photo of the issue</span>
-                          <span className="text-xs text-gray-400">
-                            Supported formats: JPG, PNG
-                          </span>
-                        </div>
-                      )}
-                    </Button>
-                    <input
-                      id="image-upload"
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={handleImageChange}
-                    />
-                  </div>
+          {/* Photos */}
+          <div className="form-group">
+            <label className="form-label">Photos (Optional)</label>
+            <div className="mt-2 flex flex-wrap gap-3">
+              {photos.map((photo, index) => (
+                <div key={index} className="relative w-24 h-24">
+                  <img 
+                    src={photo} 
+                    alt={`Uploaded ${index}`}
+                    className="w-full h-full object-cover rounded-md"
+                  />
+                  <button
+                    type="button"
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1"
+                    onClick={() => handleRemovePhoto(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-              </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="h-5 w-5" />
+                <span>Upload Photos</span>
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handlePhotoUpload}
+                accept="image/*"
+                multiple
+                className="hidden"
+              />
+              <p className="w-full text-xs text-gray-500 mt-1">Upload photos of the issue (up to 5 photos)</p>
+            </div>
+          </div>
 
-              <Button type="submit" className="w-full">
-                Submit Report
-              </Button>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+          {/* Form Actions */}
+          <div className="flex justify-end space-x-4 mt-6">
+            <button
+              type="button"
+              onClick={() => navigate("/user/dashboard")}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn btn-primary"
+            >
+              {loading ? (
+                <span className="flex items-center">
+                  <svg className="loading-spinner" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Submitting...
+                </span>
+              ) : (
+                "Submit Report"
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

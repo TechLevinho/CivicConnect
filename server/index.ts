@@ -1,83 +1,96 @@
-import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session"; // Import session
-import dotenv from "dotenv"; // Import dotenv to load env variables
+import express from "express";
+import dotenv from "dotenv";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
 import { setupAuth } from "./auth";
+import cors from "cors";
+import cookieParser from "cookie-parser";
+import http from "http";
 
 dotenv.config(); // Load .env file
 
+// Set environment
+process.env.NODE_ENV = process.env.NODE_ENV || 'development';
+
+console.log("Starting server with environment:", process.env.NODE_ENV);
+
 const app = express();
 
-// Session Middleware
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "your-default-secret-key",
-    resave: false,
-    saveUninitialized: true,
-    cookie: {
-      secure: process.env.NODE_ENV === "production", // Set secure cookies in production
-      httpOnly: true, // Prevent client-side access to cookies
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
-    },
-  })
-);
+// Configure CORS - Allow requests from client app
+app.use(cors({
+  origin: ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", 
+           "http://localhost:5176", "http://localhost:5177", "http://localhost:5178"],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
+// Add cookie-parser middleware
+app.use(cookieParser());
+
+// JSON body parsing
 app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: true }));
 
+// Add logging middleware for debugging API calls
 app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
+  console.log(`${req.method} ${req.path}`, {
+    body: req.body,
+    query: req.query,
+    cookies: req.cookies,
+    headers: {
+      contentType: req.headers['content-type'],
+      authorization: req.headers.authorization ? 'Present' : 'None'
     }
   });
-
   next();
 });
 
-(async () => {
-  // Setup auth before routes
-  setupAuth(app);
+// Session settings
+app.set("trust proxy", 1);
 
-  const server = registerRoutes(app);
+// Setup authentication
+setupAuth(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+// Register routes
+registerRoutes(app);
 
-    res.status(status).json({ message });
-    throw err;
+// Function to find an available port
+const findAvailablePort = (startPort: number): Promise<number> => {
+  return new Promise((resolve) => {
+    const server = http.createServer();
+    
+    server.on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE') {
+        // Port is in use, try the next port
+        server.close();
+        resolve(findAvailablePort(startPort + 1));
+      }
+    });
+    
+    server.listen(startPort, () => {
+      server.close();
+      resolve(startPort);
+    });
   });
+};
 
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
+// Start server on an available port (try 3002 first)
+const startServer = async () => {
+  try {
+    const PORT = await findAvailablePort(3002);
+    
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Server URL: http://localhost:${PORT}`);
+      console.log(`API endpoint: http://localhost:${PORT}/api`);
+      
+      // Also log the client's Vite configuration needed
+      console.log('\nIMPORTANT: Update your client\'s vite.config.ts proxy settings:');
+      console.log(`target: 'http://localhost:${PORT}'`);
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
   }
+};
 
-  const PORT = 5000;
-  server.listen(PORT, "0.0.0.0", () => {
-    log(`serving on port ${PORT}`);
-  });
-})();
+startServer();

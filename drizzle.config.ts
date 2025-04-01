@@ -1,14 +1,18 @@
-import { defineConfig } from "drizzle-kit";
+import type { Config } from "drizzle-kit";
+import * as dotenv from "dotenv";
+dotenv.config();
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
-}
-
-export default defineConfig({
-  out: "./migrations",
+export default {
   schema: "./shared/schema.ts",
+  out: "./migrations",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL,
+    host: "ep-aged-leaf-a8u33h3h-pooler.eastus2.azure.neon.tech",
+    user: "neondb_owner",
+    password: "npg_Mg4LCfaV8Nsw",
+    database: "neondb",
+    ssl: "require",
   },
-});
+  verbose: true,
+  strict: true,
+} satisfies Config;

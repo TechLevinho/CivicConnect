@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useState } from 'react';
 
 import type {
   ToastActionElement,
@@ -168,24 +169,46 @@ function toast({ ...props }: Toast) {
   }
 }
 
-function useToast() {
-  const [state, setState] = React.useState<State>(memoryState)
-
-  React.useEffect(() => {
-    listeners.push(setState)
-    return () => {
-      const index = listeners.indexOf(setState)
-      if (index > -1) {
-        listeners.splice(index, 1)
-      }
-    }
-  }, [state])
-
-  return {
-    ...state,
-    toast,
-    dismiss: (toastId?: string) => dispatch({ type: "DISMISS_TOAST", toastId }),
-  }
+export interface Toast {
+  id: string;
+  title?: string;
+  description?: string;
+  variant?: 'default' | 'destructive';
 }
 
-export { useToast, toast }
+export interface ToastOptions {
+  title?: string;
+  description?: string;
+  variant?: 'default' | 'destructive';
+}
+
+export function useToast() {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  function toast(options: ToastOptions) {
+    const id = Math.random().toString(36).substring(2, 9);
+    const newToast = { 
+      id, 
+      title: options.title, 
+      description: options.description,
+      variant: options.variant || 'default'
+    };
+    
+    setToasts((prevToasts) => [...prevToasts, newToast]);
+    
+    // Auto dismiss after 5 seconds
+    setTimeout(() => {
+      dismiss(id);
+    }, 5000);
+  }
+
+  function dismiss(id: string) {
+    setToasts((prevToasts) => prevToasts.filter((toast) => toast.id !== id));
+  }
+
+  return {
+    toast,
+    dismiss,
+    toasts
+  };
+}

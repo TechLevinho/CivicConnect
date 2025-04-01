@@ -1,12 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import themePlugin from "@replit/vite-plugin-shadcn-theme-json";
-import path, { dirname } from "path";
+import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
-import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Use dirname polyfill for ES modules
+const __dirname = new URL('.', import.meta.url).pathname.replace(/^\/([a-zA-Z]:)/, '$1');
+
 export default defineConfig({
   plugins: [react(), runtimeErrorOverlay(), themePlugin()],
   resolve: {
@@ -15,9 +15,18 @@ export default defineConfig({
       "@shared": path.resolve(__dirname, "shared"),
     },
   },
+  optimizeDeps: {
+    exclude: ['firebase-admin']
+  },
   root: path.resolve(__dirname, "client"),
+  cacheDir: path.resolve("node_modules/.vite"),
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
   },
+  server: {
+    port: 5173,
+    strictPort: true
+  }
 });
+

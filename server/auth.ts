@@ -1,22 +1,20 @@
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
-import { Express } from "express";
+import { Express, Request } from "express";
 import session from "express-session";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
-import { storage } from "./storage";
-import { User as SelectUser } from "@shared/schema";
-import connectPg from "connect-pg-simple";
-import { pool } from "./db";
+import { DatabaseStorage } from "./db/storage";
+import { User as DatabaseUser } from "./db/types";
 
 declare global {
   namespace Express {
-    interface User extends SelectUser {}
+    interface User extends DatabaseUser {}
   }
 }
 
 const scryptAsync = promisify(scrypt);
-const PostgresSessionStore = connectPg(session);
+const storage = new DatabaseStorage();
 
 async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
@@ -36,10 +34,6 @@ export function setupAuth(app: Express) {
     secret: process.env.SESSION_SECRET!,
     resave: false,
     saveUninitialized: false,
-    store: new PostgresSessionStore({ 
-      pool,
-      createTableIfMissing: true,
-    }),
     cookie: {
       secure: app.get("env") === "production",
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
@@ -55,7 +49,7 @@ export function setupAuth(app: Express) {
   app.use(passport.session());
 
   passport.use(
-    new LocalStrategy(async (username, password, done) => {
+    new LocalStrategy(async (username: string, password: string, done: any) => {
       try {
         const user = await storage.getUserByUsername(username);
         if (!user) {
@@ -75,8 +69,8 @@ export function setupAuth(app: Express) {
     }),
   );
 
-  passport.serializeUser((user, done) => done(null, user.id));
-  passport.deserializeUser(async (id: number, done) => {
+  passport.serializeUser((user: Express.User, done: any) => done(null, user.id));
+  passport.deserializeUser(async (id: string, done: any) => {
     try {
       const user = await storage.getUser(id);
       done(null, user);
@@ -126,7 +120,7 @@ export function setupAuth(app: Express) {
       });
 
       console.log('User registered successfully:', user.username);
-      req.login(user, (err) => {
+      (req as any).login(user, (err: any) => {
         if (err) {
           console.error('Login after registration failed:', err);
           return next(err);
@@ -140,20 +134,20 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/auth/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json(req.user);
+    res.status(200).json((req as any).user);
   });
 
   app.post("/api/auth/logout", (req, res, next) => {
-    req.logout((err) => {
+    (req as any).logout((err: any) => {
       if (err) return next(err);
       res.sendStatus(200);
     });
   });
 
   app.get("/api/auth/me", (req, res) => {
-    if (!req.isAuthenticated()) {
+    if (!(req as any).isAuthenticated()) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    res.json(req.user);
+    res.json((req as any).user);
   });
 }

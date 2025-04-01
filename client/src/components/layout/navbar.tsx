@@ -1,4 +1,4 @@
-import { Link } from "wouter";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   NavigationMenu,
@@ -9,12 +9,18 @@ import {
 } from "@/components/ui/navigation-menu";
 import { useQuery } from "@tanstack/react-query";
 import { User } from "@shared/schema";
+import { useEffect } from "react";
 
 export function Navbar() {
-  const { data: user } = useQuery<User>({ 
+  const { data: user, isLoading, error, refetch } = useQuery<User>({ 
     queryKey: ["/api/auth/me"],
     staleTime: Infinity
   });
+
+  // Refetch user data when component mounts to ensure we have the latest data
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
 
   return (
     <nav className="border-b bg-white">
@@ -22,7 +28,7 @@ export function Navbar() {
         <div className="flex justify-between h-16">
           <div className="flex">
             <div className="flex-shrink-0 flex items-center">
-              <Link href="/">
+              <Link to="/">
                 <span className="text-xl font-bold text-primary cursor-pointer">CivicWatch</span>
               </Link>
             </div>
@@ -30,7 +36,7 @@ export function Navbar() {
               <NavigationMenuList>
                 <NavigationMenuItem>
                   <NavigationMenuLink asChild>
-                    <Link href="/community-feed">
+                    <Link to="/community-feed">
                       <span className={navigationMenuTriggerStyle()}>
                         Community Feed
                       </span>
@@ -40,7 +46,7 @@ export function Navbar() {
                 {user && !user.isOrganization && (
                   <NavigationMenuItem>
                     <NavigationMenuLink asChild>
-                      <Link href="/user/report-issue">
+                      <Link to="/user/report-issue">
                         <span className={navigationMenuTriggerStyle()}>
                           Report Issue
                         </span>
@@ -55,8 +61,10 @@ export function Navbar() {
           <div className="flex items-center">
             {user ? (
               <>
-                <Link href={user.isOrganization ? "/organization/dashboard" : "/user/dashboard"}>
-                  <Button variant="ghost">Dashboard</Button>
+                <Link to={user.isOrganization ? "/organization/dashboard" : "/user/dashboard"}>
+                  <Button variant="ghost">
+                    {user.isOrganization ? "Organization Dashboard" : "User Dashboard"}
+                  </Button>
                 </Link>
                 <Button 
                   variant="ghost"
@@ -70,10 +78,10 @@ export function Navbar() {
               </>
             ) : (
               <>
-                <Link href="/auth/login">
+                <Link to="/auth/login">
                   <Button variant="ghost">Login</Button>
                 </Link>
-                <Link href="/auth/register">
+                <Link to="/auth/register">
                   <Button variant="default" className="ml-4">Register</Button>
                 </Link>
               </>

@@ -1,119 +1,165 @@
-import { useState } from 'react';
-import { useLocation } from 'wouter';
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../components/ui/use-toast";
+import "../../styles/main.css";
 
-interface LoginResponse {
-  id: number;
-  username: string;
-  email: string;
-  isOrganization: boolean;
-}
-
-const LoginPage = () => {
+export default function Login() {
+  const navigate = useNavigate();
+  const { signIn } = useAuth();
   const { toast } = useToast();
-  const [, setLocation] = useLocation();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [isLoginMode, setIsLoginMode] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [formData, setFormData] = useState({
+    email: "",
+    password: ""
+  });
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setIsLoading(true);
-    
+    setLoading(true);
+
     try {
-      const endpoint = isLoginMode ? "/api/auth/login" : "/api/auth/register";
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ 
-          username,
-          password,
-          email: username // For registration only
-        }),
-        credentials: 'include'
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || (isLoginMode ? "Login failed" : "Registration failed"));
-      }
-
-      const user = await response.json() as LoginResponse;
-      
+      await signIn(formData.email, formData.password);
       toast({
         title: "Success",
-        description: isLoginMode ? "Logged in successfully" : "Registered successfully",
+        description: "Successfully logged in!",
       });
-
-      setLocation(user.isOrganization ? "/organization/dashboard" : "/user/dashboard");
+      
+      try {
+        // Get user token to include in the request
+        const token = await (await import('firebase/auth')).getAuth().currentUser?.getIdToken(true);
+        
+        // Fetch user details to determine redirection
+        const response = await fetch('/api/auth/me', {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        
+        if (response.ok) {
+          const userData = await response.json();
+          console.log("User data:", userData);
+          
+          if (userData.isOrganization) {
+            console.log("Redirecting to organization dashboard");
+            navigate("/organization/dashboard");
+          } else {
+            console.log("Redirecting to user dashboard");
+            navigate("/user/dashboard");
+          }
+        } else {
+          console.warn("Failed to get user details, redirecting to user dashboard");
+          navigate("/user/dashboard");
+        }
+      } catch (fetchError) {
+        console.error("Error fetching user details:", fetchError);
+        navigate("/user/dashboard");
+      }
     } catch (error) {
+      console.error("Login error:", error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "An error occurred",
+        description: "Failed to log in. Please check your credentials.",
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-4">
-      <div className="w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-6 text-center">
-          {isLoginMode ? "Login" : "Register"}
-        </h1>
+    <div className="page-container">
+      <div className="form-container">
+        <h2 className="form-title">Sign in to your account</h2>
         
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Username</label>
+        <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="email" className="form-label">
+              Email address
+            </label>
             <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full p-2 border rounded"
-              disabled={isLoading}
+              type="email"
+              id="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
               required
-            />
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium mb-1">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full p-2 border rounded"
-              disabled={isLoading}
-              required
+              className="form-input"
+              placeholder="Enter your email"
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-blue-500 text-white p-2 rounded hover:bg-blue-600 disabled:opacity-50"
-          >
-            {isLoading ? "Processing..." : (isLoginMode ? "Login" : "Register")}
-          </button>
+          <div className="form-group">
+            <label htmlFor="password" className="form-label">
+              Password
+            </label>
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                id="password"
+                name="password"
+                value={formData.password}
+                onChange={handleChange}
+                required
+                className="form-input pr-10"
+                placeholder="Enter your password"
+              />
+              <button 
+                type="button" 
+                className="absolute inset-y-0 right-0 pr-3 flex items-center" 
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-gray-500">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-gray-500">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-end space-x-4 mt-6">
+            <button
+              type="button"
+              onClick={() => navigate("/auth/register")}
+              className="btn btn-secondary"
+            >
+              Create Account
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn btn-primary"
+            >
+              {loading ? (
+                <span className="flex items-center">
+                  <svg className="loading-spinner" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Signing in...
+                </span>
+              ) : (
+                "Sign in"
+              )}
+            </button>
+          </div>
         </form>
-
-        <p className="mt-4 text-center">
-          {isLoginMode ? "Don't have an account? " : "Already have an account? "}
-          <button
-            onClick={() => setIsLoginMode(!isLoginMode)}
-            className="text-blue-500 hover:underline"
-            disabled={isLoading}
-          >
-            {isLoginMode ? "Register" : "Login"}
-          </button>
-        </p>
       </div>
     </div>
   );
-};
-
-export default LoginPage;
+}
