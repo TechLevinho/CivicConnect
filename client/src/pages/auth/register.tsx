@@ -3,16 +3,21 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
 import { useToast } from "../../components/ui/use-toast";
 import { getAllOrganizations } from "../../lib/organization-data";
+import { db } from "../../lib/firebase";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import "../../styles/main.css";
+import "../../styles/auth.css";
 
 export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isOrganization, setIsOrganization] = useState(false);
-  const [organizationName, setOrganizationName] = useState("");
+  const [organizationId, setOrganizationId] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [departmentType, setDepartmentType] = useState("");
   const [loading, setLoading] = useState(false);
-  const { signUp } = useAuth();
+  const { signUp, refreshUserData } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   
@@ -27,27 +32,51 @@ export default function Register() {
     e.preventDefault();
     setLoading(true);
 
-    if (password !== confirmPassword) {
-      toast({
-        title: "Error",
-        description: "Passwords do not match.",
-        variant: "destructive",
-      });
-      setLoading(false);
-      return;
-    }
-
-    if (isOrganization && !organizationName) {
-      toast({
-        title: "Error",
-        description: "Please select an organization.",
-        variant: "destructive",
-      });
-      setLoading(false);
-      return;
-    }
-
     try {
+      // Validate form inputs
+      if (password !== confirmPassword) {
+        toast({
+          title: "Error",
+          description: "Passwords do not match.",
+          variant: "destructive",
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Organization-specific validation
+      if (isOrganization) {
+        if (!organizationId) {
+          toast({
+            title: "Error",
+            description: "Please select your organization.",
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+
+        if (!displayName) {
+          toast({
+            title: "Error",
+            description: "Please enter a display name for your organization.",
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+
+        if (!departmentType) {
+          toast({
+            title: "Error",
+            description: "Please select a department type.",
+            variant: "destructive",
+          });
+          setLoading(false);
+          return;
+        }
+      }
+
       // First register with Firebase
       console.log("Starting Firebase registration...");
       const userCredential = await signUp(email, password);
@@ -56,76 +85,108 @@ export default function Register() {
       // Get the current user
       const currentUser = userCredential.user;
       
-      // Then send additional user data to our backend
-      const userData = {
-        uid: currentUser.uid,
-        email: email,
-        isOrganization: isOrganization,
-        organizationName: isOrganization ? organizationName : null
-      };
+      // Find the selected organization to get its full details
+      const selectedOrg = isOrganization ? 
+        organizations.find(org => org.id === organizationId) : null;
       
-      console.log("Sending user data to backend:", userData);
-      
-      // Update the user profile on our backend
-      const response = await fetch('/api/auth/update-profile', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(userData),
-      });
-      
-      const responseData = await response.json();
-      console.log("Backend response:", responseData);
-      
-      if (!response.ok) {
-        throw new Error(responseData.message || 'Failed to update user profile');
-      }
-      
-      toast({
-        title: "Success",
-        description: responseData.message || "Successfully registered!",
-      });
-      
-      // Force token refresh to ensure claims are updated
-      await currentUser.getIdToken(true);
-      
-      // Wait a moment for token propagation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Get an updated token with new claims
-      const token = await currentUser.getIdToken(true);
-      
-      // Get user details after registration to confirm claims were set correctly
-      try {
-        const userResponse = await fetch('/api/auth/me', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        
-        if (userResponse.ok) {
-          const userDetails = await userResponse.json();
-          console.log("User details after registration:", userDetails);
+      if (isOrganization && selectedOrg) {
+        try {
+          console.log("Creating organization document in Firestore...");
           
-          if (userDetails.isOrganization) {
+          // Get display name for the department type
+          const departmentTypeDisplay = departmentType
+            .split('_')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
+          
+          // Create the organization document in Firestore
+          const orgDocRef = doc(db, "organizations", currentUser.uid);
+          
+          // Organization data to save
+          const orgData = {
+            uid: currentUser.uid,
+            email: email,
+            role: "organization",
+            isOrganization: true,
+            department_type: departmentType,
+            department_type_display: departmentTypeDisplay,
+            name: displayName,
+            organization_id: selectedOrg.id,
+            organization_name: selectedOrg.name,
+            issue_categories: [departmentType], // Store as array for future expansion
+            assigned_issues: [],
+            createdAt: serverTimestamp()
+          };
+          
+          // Write to Firestore
+          await setDoc(orgDocRef, orgData);
+          console.log("Organization document created successfully:", orgData);
+          
+          toast({
+            title: "Success",
+            description: "Your organization profile has been created!",
+          });
+          
+          // Now send the data to our backend API as well for custom claims
+          await sendProfileDataToBackend(currentUser, {
+            ...orgData,
+            isOrganization: true,
+            organizationName: orgData.name,
+            organizationId: selectedOrg.id
+          });
+          
+          // Force token refresh to ensure claims are updated
+          await currentUser.getIdToken(true);
+          
+          // Wait a moment for token propagation
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Refresh user data in context to ensure organization status is set
+          await refreshUserData();
+          
+          // Navigate to organization dashboard
+          console.log("Registration complete. Redirecting to organization dashboard.");
+          setTimeout(() => {
             navigate("/organization/dashboard");
-          } else {
-            navigate("/user/dashboard");
+          }, 500);
+        } catch (firestoreError) {
+          console.error("Error creating organization in Firestore:", firestoreError);
+          console.error("Full error details:", JSON.stringify(firestoreError, null, 2));
+          
+          if (firestoreError instanceof Error && firestoreError.stack) {
+            console.error("Error stack:", firestoreError.stack);
           }
-        } else {
-          // Default to user dashboard if we can't determine
-          console.warn("Could not get user type, defaulting to user dashboard");
-          navigate("/user/dashboard");
+          
+          toast({
+            title: "Organization Setup Failed",
+            description: "There was a problem setting up your organization. Please try again or contact support.",
+            variant: "destructive",
+          });
+          setLoading(false);
         }
-      } catch (fetchError) {
-        console.error("Error fetching user details:", fetchError);
-        // If there's an error fetching user details, go to the appropriate dashboard based on registration info
-        if (isOrganization) {
-          navigate("/organization/dashboard");
-        } else {
+      } else {
+        // Regular user flow
+        const userData = {
+          uid: currentUser.uid,
+          email: email,
+          isOrganization: false,
+          role: "user"
+        };
+        
+        // Send to backend API for custom claims
+        await sendProfileDataToBackend(currentUser, userData);
+        
+        // Force token refresh
+        await currentUser.getIdToken(true);
+        
+        // Refresh user data in context
+        await refreshUserData();
+        
+        // Navigate to user dashboard
+        console.log("Registration complete. Redirecting to user dashboard.");
+        setTimeout(() => {
           navigate("/user/dashboard");
-        }
+        }, 500);
       }
     } catch (error) {
       console.error("Registration error:", error);
@@ -134,19 +195,76 @@ export default function Register() {
         description: error instanceof Error ? error.message : "Failed to register. Please try again.",
         variant: "destructive",
       });
-    } finally {
       setLoading(false);
+    }
+  };
+  
+  // Helper function to send profile data to backend
+  const sendProfileDataToBackend = async (
+    user: { uid: string },
+    profileData: {
+      uid: string;
+      email: string;
+      isOrganization?: boolean;
+      role: string;
+      [key: string]: any;
+    }
+  ) => {
+    try {
+      console.log("Sending user data to backend:", profileData);
+      
+      const response = await fetch('/api/auth/update-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(profileData),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Profile update failed with status:", response.status);
+        console.error("Error response:", errorText);
+        throw new Error(errorText || `Profile update failed with status: ${response.status}`);
+      }
+      
+      const responseData = await response.json();
+      console.log("Backend response:", responseData);
+      return true;
+    } catch (profileUpdateError) {
+      console.error("Profile update error:", profileUpdateError);
+      console.error("Full error details:", JSON.stringify(profileUpdateError, null, 2));
+      
+      // Log the stack trace if available
+      if (profileUpdateError instanceof Error && profileUpdateError.stack) {
+        console.error("Error stack:", profileUpdateError.stack);
+      }
+      
+      // Show a notification but don't block the flow
+      toast({
+        title: "Warning",
+        description: "Your account was created but profile synchronization may be incomplete. Some features might be limited.",
+        variant: "destructive",
+      });
+      
+      // Continue since the Firebase account and Firestore doc were created
+      console.log("Continuing despite profile API update error");
+      return false;
     }
   };
 
   return (
-    <div className="page-container">
-      <div className="form-container">
-        <h2 className="form-title">Create your account</h2>
+    <div className="auth-container">
+      <div className="auth-card">
+        <div className="auth-header">
+          <h2 className="auth-title">Create your account</h2>
+          <p className="auth-subtitle">Join CivicConnectt to report and track issues in your community</p>
+        </div>
         
-        <form onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label htmlFor="email" className="form-label">
+        <div className="auth-form">
+          <form onSubmit={handleSubmit}>
+          <div className="auth-form-group">
+            <label htmlFor="email" className="auth-label">
               Email address
             </label>
             <input
@@ -157,13 +275,13 @@ export default function Register() {
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="form-input"
+              className="auth-input"
               placeholder="Enter your email"
             />
           </div>
 
-          <div className="form-group">
-            <label htmlFor="password" className="form-label">
+          <div className="auth-form-group">
+            <label htmlFor="password" className="auth-label">
               Password
             </label>
             <div className="relative">
@@ -175,7 +293,7 @@ export default function Register() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="form-input pr-10"
+                className="auth-input pr-10"
                 placeholder="Create a password"
               />
               <button 
@@ -197,8 +315,8 @@ export default function Register() {
             </div>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="confirmPassword" className="form-label">
+          <div className="auth-form-group">
+            <label htmlFor="confirmPassword" className="auth-label">
               Confirm Password
             </label>
             <div className="relative">
@@ -210,7 +328,7 @@ export default function Register() {
                 required
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="form-input pr-10"
+                className="auth-input pr-10"
                 placeholder="Confirm your password"
               />
               <button 
@@ -232,42 +350,113 @@ export default function Register() {
             </div>
           </div>
 
-          <div className="form-group">
-            <label className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                name="isOrganization"
-                checked={isOrganization}
-                onChange={(e) => setIsOrganization(e.target.checked)}
-                className="form-checkbox h-4 w-4"
-              />
-              <span className="form-label">Register as an organization</span>
+          <div className="auth-checkbox-container">
+            <input
+              type="checkbox"
+              name="isOrganization"
+              id="isOrganization"
+              checked={isOrganization}
+              onChange={(e) => setIsOrganization(e.target.checked)}
+              className="auth-checkbox"
+            />
+            <label htmlFor="isOrganization" className="auth-checkbox-label">
+              Register as an organization
             </label>
           </div>
 
           {isOrganization && (
-            <div className="form-group">
-              <label htmlFor="organizationName" className="form-label">
-                Organization Name
-              </label>
-              <select
-                id="organizationName"
-                name="organizationName"
-                value={organizationName}
-                onChange={(e) => setOrganizationName(e.target.value)}
-                className="form-select"
-                required={isOrganization}
-              >
-                <option value="">Select an organization</option>
-                {organizations.map((org) => (
-                  <option key={org.id} value={org.name}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-sm text-gray-500 mt-1">
-                Note: Only predefined organizations can be selected for registration
+            <div className="org-form-section animate-fade-in">
+              <h3 className="org-form-title">Organization Information</h3>
+              <p className="text-sm text-blue-600 mb-4">
+                Please provide details about your organization to register as an organization member.
               </p>
+
+              <div className="form-group">
+                <label htmlFor="organizationId" className="form-label required-field">
+                  Organization Name
+                </label>
+                <select
+                  id="organizationId"
+                  name="organizationId"
+                  value={organizationId}
+                  onChange={(e) => {
+                    setOrganizationId(e.target.value);
+                    // Reset department type when organization changes
+                    setDepartmentType("");
+                  }}
+                  className="form-select"
+                  required={isOrganization}
+                >
+                  <option value="">Select an organization</option>
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-sm text-gray-500 mt-1">
+                  Select the parent organization you belong to
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="displayName" className="form-label required-field">
+                  Display Name
+                </label>
+                <input
+                  id="displayName"
+                  name="displayName"
+                  type="text"
+                  autoComplete="organization-name"
+                  required
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  className="form-input"
+                  placeholder="Enter your organization's display name"
+                />
+                <p className="text-sm text-gray-500 mt-1">
+                  This is how your organization will be displayed in the system
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="departmentType" className="form-label required-field">
+                  Department Type
+                </label>
+                <select
+                  id="departmentType"
+                  name="departmentType"
+                  value={departmentType}
+                  onChange={(e) => setDepartmentType(e.target.value)}
+                  className="form-select"
+                  required={isOrganization}
+                  disabled={!organizationId}
+                >
+                  <option value="">Select a department type</option>
+                  {!organizationId ? (
+                    <option disabled>Please select an organization first</option>
+                  ) : (
+                    organizations
+                      .find(org => org.id === organizationId)
+                      ?.issueTypes.map((type: string) => {
+                        // Convert ID format to display format (e.g., "water_supply" to "Water Supply")
+                        const displayName = type
+                          .split('_')
+                          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                          .join(' ');
+                          
+                        return (
+                          <option key={type} value={type}>
+                            {displayName}
+                          </option>
+                        );
+                      })
+                  )}
+                </select>
+                <p className="text-sm text-gray-500 mt-1">
+                  The department type determines which issue categories your organization can handle
+                </p>
+              </div>
             </div>
           )}
 
@@ -275,14 +464,14 @@ export default function Register() {
             <button
               type="button"
               onClick={() => navigate("/auth/login")}
-              className="btn btn-secondary"
+              className="auth-button bg-white text-gray-700 border border-gray-300 hover:bg-gray-50"
             >
               Sign In
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="btn btn-primary"
+              className="auth-button bg-gradient-to-r from-indigo-600 to-indigo-500"
             >
               {loading ? (
                 <span className="flex items-center">
@@ -298,6 +487,7 @@ export default function Register() {
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   );

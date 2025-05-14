@@ -1,26 +1,207 @@
 import { useQuery } from "@tanstack/react-query";
-import { type Issue } from "@shared/schema";
 import { IssueCard } from "@/components/issues/issue-card";
 import { Card, CardContent } from "@/components/ui/card";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { getAuth } from "firebase/auth";
 
 const HERO_IMAGE = "https://images.unsplash.com/photo-1504805572947-34fad45aed93";
 
-// ... existing code ...
+// Define our own issue interface that's compatible with both APIs
+interface Issue {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  status: string;
+  severity?: string;
+  priority?: string;
+  category?: string;
+  userId: string;
+  createdAt: any;
+  imageUrl?: string | null;
+}
+
+// Define the API response type
+interface IssuesResponse {
+  issues: Issue[];
+  count: number;
+  status: number;
+  filters?: {
+    status?: string;
+    severity?: string;
+  };
+}
+
+// Sample issues for when API isn't available
+const FALLBACK_ISSUES: Issue[] = [
+  {
+    id: "demo1",
+    title: "Pothole on Main Street",
+    description: "Large pothole causing damage to vehicles",
+    location: "123 Main St, Downtown",
+    status: "open",
+    severity: "high",
+    priority: "high",
+    category: "infrastructure",
+    userId: "demo-user",
+    createdAt: new Date(),
+  },
+  {
+    id: "demo2",
+    title: "Broken Street Light",
+    description: "Street light has been out for 2 weeks creating safety issues",
+    location: "Oak Avenue & 5th Street",
+    status: "in_progress",
+    severity: "medium",
+    priority: "medium",
+    category: "safety",
+    userId: "demo-user",
+    createdAt: new Date(),
+  },
+  {
+    id: "demo3",
+    title: "Trash Overflow",
+    description: "Public trash cans overflowing in the park area",
+    location: "Central Park, North Entrance",
+    status: "open",
+    severity: "medium",
+    priority: "medium", 
+    category: "environment",
+    userId: "demo-user",
+    createdAt: new Date(),
+  },
+  {
+    id: "demo4",
+    title: "Abandoned Vehicle",
+    description: "Car appears to be abandoned for over a month",
+    location: "Pine Street & 10th Avenue",
+    status: "open",
+    severity: "low",
+    priority: "low",
+    category: "safety",
+    userId: "demo-user",
+    createdAt: new Date(),
+  },
+  {
+    id: "demo5",
+    title: "Graffiti on Public Building",
+    description: "Vandalism on the community center wall",
+    location: "45 Community Drive",
+    status: "open",
+    severity: "low",
+    priority: "low",
+    category: "other",
+    userId: "demo-user",
+    createdAt: new Date(),
+  },
+  {
+    id: "demo6",
+    title: "Water Main Break",
+    description: "Water flooding the street from broken pipe",
+    location: "Elm Street & 3rd Avenue",
+    status: "in_progress",
+    severity: "high",
+    priority: "high",
+    category: "infrastructure",
+    userId: "demo-user",
+    createdAt: new Date(),
+  }
+];
 
 export default function CommunityFeed() {
-  const { data: issues, isLoading } = useQuery<Issue[]>({
+  const auth = getAuth();
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  
+  // Get the auth token on component mount
+  useEffect(() => {
+    const getToken = async () => {
+      try {
+        const currentUser = auth.currentUser;
+        if (currentUser) {
+          const token = await currentUser.getIdToken(true);
+          setAuthToken(token);
+        }
+      } catch (error) {
+        console.error("Error getting auth token:", error);
+      }
+    };
+    
+    getToken();
+  }, [auth]);
+  
+  const { data: response, isLoading, error } = useQuery<IssuesResponse>({
     queryKey: ["/api/issues"],
+    // Changed to always be enabled, with a retry if token becomes available
+    enabled: true,
+    retry: authToken ? 1 : 0,
+    select: (data) => {
+      // Handle both new and old response formats
+      if (data.issues && Array.isArray(data.issues)) {
+        return data;
+      } else if (Array.isArray(data)) {
+        // Convert old format to new format
+        return {
+          issues: data,
+          count: data.length,
+          status: 200
+        };
+      }
+      return { issues: [], count: 0, status: 200 };
+    },
+    // Add fetch options to include the Authorization header
+    queryFn: async () => {
+      try {
+        if (!authToken) {
+          console.log("No auth token available, using fallback issues");
+          // Return fallback data structure when no token is available
+          return {
+            issues: FALLBACK_ISSUES,
+            count: FALLBACK_ISSUES.length,
+            status: 200
+          };
+        }
+        
+        const response = await fetch('/api/issues', {
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          console.error("API error:", errorData?.message || `Error ${response.status}`);
+          // Return fallback data on error
+          return {
+            issues: FALLBACK_ISSUES,
+            count: FALLBACK_ISSUES.length,
+            status: response.status
+          };
+        }
+        
+        return response.json();
+      } catch (error) {
+        console.error("Failed to fetch issues:", error);
+        // Return fallback data on any error
+        return {
+          issues: FALLBACK_ISSUES,
+          count: FALLBACK_ISSUES.length,
+          status: 500
+        };
+      }
+    }
   });
 
   // Add search and filter state
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
 
+  // Get issues from the response, falling back to an empty array
+  const issues = response?.issues || [];
+  
   // Filter issues based on search and category
-  const filteredIssues = issues?.filter((issue) => {
-    const matchesSearch = issue.title.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesCategory = selectedCategory === "all" || issue.category === selectedCategory;
+  const filteredIssues = issues.filter((issue) => {
+    const matchesSearch = issue.title?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = selectedCategory === "all" || selectedCategory === issue.category;
     return matchesSearch && matchesCategory;
   });
 

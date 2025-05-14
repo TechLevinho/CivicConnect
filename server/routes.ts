@@ -1,129 +1,7 @@
 import express from "express";
-import { db as firestore } from "./firebase";
+import { db, auth } from "./firebase";
 import { verifyToken, AuthRequest } from "./middleware/auth";
 import admin from "firebase-admin";
-import { DatabaseStorage } from "./db/storage";
-
-// Initialize Storage
-const storage = new DatabaseStorage();
-
-// Define predefined organizations grouped by issue type
-const ORGANIZATIONS = [
-  {
-    id: 'bmc-drainage',
-    name: 'BMC Stormwater Drain Department',
-    description: 'Handles drainage systems and waterlogging issues in Mumbai',
-    issueTypes: ['waterlogging']
-  },
-  {
-    id: 'pwd',
-    name: 'Public Works Department (PWD)',
-    description: 'Responsible for construction and maintenance of public infrastructure',
-    issueTypes: ['waterlogging', 'roads']
-  },
-  {
-    id: 'mjp',
-    name: 'Maharashtra Jeevan Pradhikaran (MJP)',
-    description: 'Water supply and sanitation in Maharashtra',
-    issueTypes: ['waterlogging', 'water_supply']
-  },
-  {
-    id: 'mmrda',
-    name: 'Mumbai Metropolitan Region Development Authority (MMRDA)',
-    description: 'Infrastructure development in Mumbai Metropolitan Region',
-    issueTypes: ['roads']
-  },
-  {
-    id: 'bmc-waste',
-    name: 'BMC Solid Waste Management Department',
-    description: 'Waste collection and disposal in Mumbai',
-    issueTypes: ['garbage']
-  },
-  {
-    id: 'mpcb',
-    name: 'Maharashtra Pollution Control Board (MPCB)',
-    description: 'Monitoring and control of pollution in Maharashtra',
-    issueTypes: ['garbage']
-  },
-  {
-    id: 'sba',
-    name: 'Swachh Bharat Abhiyan (SBA) Local Ward Office',
-    description: 'Cleanliness mission at local level',
-    issueTypes: ['garbage', 'public_places']
-  },
-  {
-    id: 'muni-waste',
-    name: 'Municipal Corporation Waste Management Division',
-    description: 'Local waste management services',
-    issueTypes: ['garbage']
-  },
-  {
-    id: 'muni-roads',
-    name: 'Municipal Road Maintenance Department',
-    description: 'Road repair and maintenance at local level',
-    issueTypes: ['roads']
-  },
-  {
-    id: 'bmc-garden',
-    name: 'BMC - Garden & Recreation Department',
-    description: 'Maintenance of public parks and gardens',
-    issueTypes: ['public_places']
-  },
-  {
-    id: 'muda',
-    name: 'Mumbai Urban Development Authority (MUDA)',
-    description: 'Urban planning and development in Mumbai',
-    issueTypes: ['public_places']
-  },
-  {
-    id: 'suda',
-    name: 'State Urban Development Authority (SUDA)',
-    description: 'Urban planning at state level',
-    issueTypes: ['public_places']
-  },
-  {
-    id: 'muni-parks',
-    name: 'Municipal Park Maintenance Division',
-    description: 'Maintenance of local parks and recreational areas',
-    issueTypes: ['public_places']
-  },
-  {
-    id: 'mseb',
-    name: 'Maharashtra State Electricity Board (MSEB)',
-    description: 'Electricity supply and infrastructure in Maharashtra',
-    issueTypes: ['streetlights']
-  },
-  {
-    id: 'tata-power',
-    name: 'Tata Power',
-    description: 'Private electricity distribution company',
-    issueTypes: ['streetlights']
-  },
-  {
-    id: 'adani-electricity',
-    name: 'Adani Electricity Mumbai',
-    description: 'Private electricity distribution company',
-    issueTypes: ['streetlights']
-  },
-  {
-    id: 'local-electricity',
-    name: 'Local Municipal Electricity Department',
-    description: 'Municipal electricity distribution and maintenance',
-    issueTypes: ['streetlights']
-  },
-  {
-    id: 'bmc-water',
-    name: 'BMC Water Supply Department',
-    description: 'Water supply and distribution in Mumbai',
-    issueTypes: ['water_supply']
-  },
-  {
-    id: 'water-management',
-    name: 'City Water Management Authorities',
-    description: 'Local water supply and management',
-    issueTypes: ['water_supply']
-  }
-];
 
 export const registerRoutes = (app: express.Application) => {
   app.use(express.json());
@@ -152,52 +30,154 @@ export const registerRoutes = (app: express.Application) => {
     res.json({ message: "API is working!" });
   });
 
-  // Organization routes
-  app.get("/api/organizations", (req, res) => {
+  // Handle user/organization profile updates after registration
+  app.post("/api/auth/update-profile", async (req, res) => {
     try {
-      res.json(ORGANIZATIONS);
+      const { uid, email, isOrganization, organizationName, organizationId, department_type, role } = req.body;
+      
+      console.log("📝 Profile update request:", { uid, email, isOrganization, organizationName, organizationId, department_type, role });
+      
+      if (!uid || !email) {
+        console.error("❌ Missing required fields:", { uid, email });
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      
+      // Validate that the user exists in Firebase Auth
+      try {
+        await admin.auth().getUser(uid);
+        console.log("✓ User verified in Firebase Auth:", uid);
+      } catch (authError) {
+        console.error("❌ User not found in Firebase Auth:", uid, authError);
+        return res.status(404).json({ error: "User not found in Firebase Auth" });
+      }
+      
+      if (isOrganization) {
+        console.log("🏢 Creating organization profile for:", uid);
+        
+        if (!organizationName) {
+          return res.status(400).json({ error: "Organization name is required" });
+        }
+        
+        // Create organization profile
+        const orgData = {
+          name: organizationName,
+          email,
+          uid,
+          role: "organization",
+          department_type: department_type || "General",
+          assigned_issues: [],
+          location: null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        
+        // First, check if the organization already exists
+        const existingOrg = await db.collection("organizations").doc(uid).get();
+        if (existingOrg.exists) {
+          console.log("⚠️ Organization already exists:", uid);
+          
+          // Ensure the custom claims are set properly
+          await admin.auth().setCustomUserClaims(uid, { 
+            role: "organization",
+            isOrganization: true
+          });
+          
+          return res.json({ 
+            message: "Organization profile already exists",
+            profile: existingOrg.data()
+          });
+        }
+        
+        // Create the organization
+        await db.collection("organizations").doc(uid).set(orgData);
+        
+        // Set custom claims for organization
+        console.log("🔑 Setting organization custom claims for:", uid);
+        await admin.auth().setCustomUserClaims(uid, { 
+          role: "organization",
+          isOrganization: true 
+        });
+        
+        console.log("✅ Organization profile created successfully:", uid);
+        return res.json({ 
+          message: "Organization profile created successfully",
+          profile: orgData 
+        });
+      } else {
+        console.log("👤 Creating user profile for:", uid);
+        
+        // Create regular user profile
+        const userData = {
+          email,
+          uid,
+          name: email.split('@')[0], // Default name from email
+          role: "user",
+          phoneNumber: null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        
+        // First, check if the user already exists
+        const existingUser = await db.collection("users").doc(uid).get();
+        if (existingUser.exists) {
+          console.log("⚠️ User already exists:", uid);
+          
+          // Ensure the custom claims are set properly
+          await admin.auth().setCustomUserClaims(uid, { 
+            role: "user",
+            isOrganization: false
+          });
+          
+          return res.json({ 
+            message: "User profile already exists",
+            profile: existingUser.data()
+          });
+        }
+        
+        // Create the user
+        await db.collection("users").doc(uid).set(userData);
+        
+        // Set custom claims for regular user
+        console.log("🔑 Setting user custom claims for:", uid);
+        await admin.auth().setCustomUserClaims(uid, { 
+          role: "user",
+          isOrganization: false
+        });
+        
+        console.log("✅ User profile created successfully:", uid);
+        return res.json({ 
+          message: "User profile created successfully",
+          profile: userData 
+        });
+      }
     } catch (error) {
-      console.error("Error fetching organizations:", error);
-      res.status(500).json({ error: "Failed to fetch organizations" });
-    }
-  });
-
-  app.get("/api/organizations/:issueType", (req, res) => {
-    try {
-      const { issueType } = req.params;
-      const filteredOrgs = ORGANIZATIONS.filter(org => 
-        org.issueTypes.includes(issueType)
-      );
-      res.json(filteredOrgs);
-    } catch (error) {
-      console.error("Error fetching organizations by issue type:", error);
-      res.status(500).json({ error: "Failed to fetch organizations by issue type" });
+      console.error("❌ Error updating profile:", error);
+      res.status(500).json({ error: "Failed to update profile", details: (error as Error).message });
     }
   });
 
   // User routes
   app.post("/api/users", verifyToken, async (req: AuthRequest, res) => {
     try {
-      const { email, isOrganization, organizationName } = req.body;
+      const { name, email, phoneNumber } = req.body;
       const { uid } = req.firebaseUser!;
 
-      // For organization users, validate that the organization name is in our predefined list
-      if (isOrganization) {
-        const organizationExists = ORGANIZATIONS.some(org => org.name === organizationName);
-        if (!organizationExists) {
-          return res.status(400).json({ error: "Invalid organization name. Please select from the predefined list." });
-        }
+      // Prevent creation of user if the user is already an organization
+      const orgDoc = await db.collection("organizations").doc(uid).get();
+      if (orgDoc.exists) {
+        return res.status(400).json({ 
+          error: "Cannot create user profile: account already exists as an organization" 
+        });
       }
 
       const userData = {
+        name,
         email,
-        isOrganization,
-        organizationName,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        uid,
+        phoneNumber: phoneNumber || null,
+        role: "user",
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
       };
 
-      await firestore.collection("users").doc(uid).set(userData);
+      await db.collection("users").doc(uid).set(userData);
       res.json({ id: uid, ...userData });
     } catch (error) {
       console.error("Error creating user:", error);
@@ -205,34 +185,86 @@ export const registerRoutes = (app: express.Application) => {
     }
   });
 
-  // Add a new endpoint to check user status and get correct redirection
+  // Organization routes
+  app.post("/api/organizations", verifyToken, async (req: AuthRequest, res) => {
+    try {
+      const { name, department_type, location, email } = req.body;
+      const { uid } = req.firebaseUser!;
+
+      // Prevent creation of organization if the user already exists
+      const userDoc = await db.collection("users").doc(uid).get();
+      if (userDoc.exists) {
+        return res.status(400).json({ 
+          error: "Cannot create organization profile: account already exists as a user" 
+        });
+      }
+
+      const orgData = {
+        name,
+        uid,
+        department_type,
+        email,
+        assigned_issues: [],
+        role: "organization",
+        location: location || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+
+      await db.collection("organizations").doc(uid).set(orgData);
+      res.json({ id: uid, ...orgData });
+    } catch (error) {
+      console.error("Error creating organization:", error);
+      res.status(500).json({ error: "Failed to create organization" });
+    }
+  });
+
+  // Add an explicit endpoint to get current user information
   app.get("/api/auth/me", verifyToken, async (req: AuthRequest, res) => {
     try {
       if (!req.firebaseUser || !req.firebaseUser.uid) {
         return res.status(401).json({ error: "Unauthorized" });
       }
-
-      const uid = req.firebaseUser.uid;
       
-      // Get the latest token claims
-      const tokenResult = await admin.auth().getUser(uid);
-      const customClaims = tokenResult.customClaims || {};
+      const userId = req.firebaseUser.uid;
       
-      // Also get the user document from Firestore for complete data
-      const userDoc = await firestore.collection("users").doc(uid).get();
-      
-      if (!userDoc.exists) {
-        return res.status(404).json({ error: "User not found" });
+      // First check if user is an organization
+      const orgDoc = await db.collection("organizations").doc(userId).get();
+      if (orgDoc.exists) {
+        const orgData = orgDoc.data() || {};
+        // Force set the isOrganization flag to true
+        return res.json({
+          ...orgData,
+          uid: userId,
+          id: userId,
+          isOrganization: true,
+          role: "organization",
+          redirectPath: "/organization/dashboard",
+        });
       }
       
-      const userData = userDoc.data();
+      // Otherwise check regular user collection
+      const userDoc = await db.collection("users").doc(userId).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data() || {};
+        // Explicitly include the isOrganization flag (defaulting to false for users)
+        return res.json({
+          ...userData,
+          uid: userId,
+          id: userId,
+          isOrganization: userData.isOrganization === true || userData.role === "organization",
+          role: userData.role || "user",
+          redirectPath: userData.isOrganization ? "/organization/dashboard" : "/user/dashboard",
+        });
+      }
       
-      res.json({
-        uid,
+      // No user found in either collection, return the basic Firebase user
+      return res.json({
+        uid: userId,
+        id: userId,
         email: req.firebaseUser.email,
-        isOrganization: customClaims.isOrganization || userData?.isOrganization || false,
-        organizationName: customClaims.organizationName || userData?.organizationName || null,
-        userType: (customClaims.isOrganization || userData?.isOrganization) ? 'organization' : 'user'
+        isOrganization: req.firebaseUser.isOrganization === true || req.firebaseUser.role === "organization",
+        role: req.firebaseUser.role || "user",
+        redirectPath: req.firebaseUser.isOrganization ? "/organization/dashboard" : "/user/dashboard",
       });
     } catch (error) {
       console.error("Error fetching user data:", error);
@@ -240,348 +272,595 @@ export const registerRoutes = (app: express.Application) => {
     }
   });
 
-  // Update the profile endpoint to properly set custom claims
-  app.post("/api/auth/update-profile", async (req, res, next) => {
-    try {
-      console.log("Received update-profile request:", req.body);
-
-      const { uid, email, isOrganization, organizationName } = req.body;
-
-      if (!uid || !email) {
-        console.log("Missing required fields:", { uid, email });
-        return res.status(400).json({ message: "User ID and email are required" });
-      }
-
-      // For organization users, validate that the organization name is in our predefined list
-      if (isOrganization) {
-        if (!organizationName) {
-          console.log("Missing organization name for organization user");
-          return res.status(400).json({ message: "Organization name is required for organization users" });
-        }
-
-        const organizationExists = ORGANIZATIONS.some(org => org.name === organizationName);
-        if (!organizationExists) {
-          console.log("Invalid organization name:", organizationName);
-          return res.status(400).json({ message: "Invalid organization name. Please select from the predefined list." });
-        }
-      }
-
-      // Use Firestore directly
-      const userRef = firestore.collection("users").doc(uid);
-
-      // Check if user exists
-      const userDoc = await userRef.get();
-      const userData: {
-        email: string;
-        username: string;
-        isOrganization: boolean;
-        organizationName: string | null;
-        updatedAt: Date;
-        createdAt?: Date;
-      } = {
-        email,
-        username: email.split('@')[0],
-        isOrganization: isOrganization || false,
-        organizationName: isOrganization ? organizationName : null,
-        updatedAt: new Date()
-      };
-
-      if (!userDoc.exists) {
-        console.log("User not found in Firestore, creating new user document");
-        // If user doesn't exist, create them
-        userData.createdAt = new Date();
-      }
-
-      // Set or update the user document
-      await userRef.set(userData, { merge: true });
-      
-      // Always update the Firebase Auth custom claims to ensure they stay in sync
-      console.log("Updating Firebase custom claims for user:", { uid, isOrganization });
-      await admin.auth().setCustomUserClaims(uid, {
-        isOrganization: Boolean(isOrganization),
-        organizationName: isOrganization ? organizationName : null
-      });
-      
-      // Force token refresh
-      try {
-        // Revoke refresh tokens to ensure new token with updated claims is issued on next sign-in
-        await admin.auth().revokeRefreshTokens(uid);
-        console.log("Refresh tokens revoked for user:", uid);
-      } catch (tokenError) {
-        console.error("Error revoking refresh tokens:", tokenError);
-        // Continue anyway as the user document was updated successfully
-      }
-
-      res.status(200).json({
-        message: "User profile updated successfully",
-        isOrganization: Boolean(isOrganization),
-        organizationName: isOrganization ? organizationName : null
-      });
-    } catch (error) {
-      console.error("Error updating user profile:", error);
-      res.status(500).json({
-        message: "Failed to update user profile",
-        error: error instanceof Error ? error.message : "Unknown error"
-      });
-    }
-  });
-
   // Issue routes
-  app.get("/api/issues", verifyToken, async (req: AuthRequest, res) => {
+  
+  // POST /report-issue - Create a new issue
+  app.post("/api/report-issue", verifyToken, async (req: AuthRequest, res) => {
     try {
-      console.log("GET /api/issues request received:", {
-        user: req.firebaseUser ? {
-          uid: req.firebaseUser.uid,
-          isOrganization: req.firebaseUser.isOrganization
-        } : 'No user',
-        headers: req.headers.authorization ? "Has auth header" : "No auth header"
-      });
-
-      // Configure Firestore query based on user role
-      let query = firestore.collection("issues");
-      
-      // If the user is an organization member, they might have specific filtering
-      // For now, we'll fetch all issues for any user
-      
-      console.log("Executing Firestore query...");
-      const issuesSnapshot = await query.get();
-      console.log(`Retrieved ${issuesSnapshot.docs.length} documents from Firestore`);
-      
-      // Map the data to ensure consistent structure with client expectations
-      const issues = issuesSnapshot.docs.map((doc) => {
-        const data = doc.data();
-        
-        // Convert any Firebase Timestamps to Date objects
-        const createdAt = data.createdAt ? 
-          (data.createdAt.toDate ? data.createdAt.toDate() : data.createdAt) : null;
-        const updatedAt = data.updatedAt ? 
-          (data.updatedAt.toDate ? data.updatedAt.toDate() : data.updatedAt) : null;
-        
-        // Convert string ID to number if needed (to match client-side typing)
-        let id = doc.id;
-        if (typeof id === 'string' && !isNaN(Number(id))) {
-          id = Number(id);
-        }
-        
-        // Ensure that the issue status is one of the expected values
-        const status = data.status || 'open';
-        
-        // Return structured issue data
-        return {
-          id,
-          title: data.title || '',
-          description: data.description || '',
-          location: data.location || '',
-          latitude: data.latitude || null,
-          longitude: data.longitude || null,
-          status,
-          priority: data.priority || 'medium',
-          userId: data.userId || 0,
-          organizationName: data.organizationName || null,
-          createdAt,
-          updatedAt
-        };
-      });
-
-      console.log(`Returning ${issues.length} issues to client`);
-      res.json(issues);
-    } catch (error) {
-      console.error("Error fetching issues:", error);
-      // Better error response
-      res.status(500).json({ 
-        error: "Failed to fetch issues", 
-        message: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString()
-      });
-    }
-  });
-
-  app.get("/api/issues/:id", verifyToken, async (req: AuthRequest, res) => {
-    try {
-      const issueDoc = await firestore.collection("issues").doc(req.params.id).get();
-      if (!issueDoc.exists) {
-        return res.status(404).json({ error: "Issue not found" });
-      }
-      res.json({ id: issueDoc.id, ...issueDoc.data() });
-    } catch (error) {
-      console.error("Error fetching issue:", error);
-      res.status(500).json({ error: "Failed to fetch issue" });
-    }
-  });
-
-  app.post("/api/issues", verifyToken, async (req: AuthRequest, res) => {
-    try {
-      console.log("POST /api/issues received:", {
-        body: req.body,
-        user: req.firebaseUser,
-        headers: req.headers.authorization ? "Has auth header" : "No auth header",
-      });
-      
-      const { title, description, location, priority, issueType, organizationName, imageUrl } = req.body;
-      
-      // In development mode, use mock user ID if not provided
-      const uid = req.firebaseUser?.uid || (process.env.NODE_ENV === 'development' ? 'dev-user-id' : undefined);
-      
-      if (!uid) {
-        console.error("No user ID available");
-        return res.status(401).json({ error: "Authentication required" });
+      if (!req.firebaseUser || !req.firebaseUser.uid) {
+        return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Validate required fields
+      const { title, description, imageURL, location, severity, assignedTo } = req.body;
+      
       if (!title || !description || !location) {
-        console.error("Missing required fields:", { title, description, location });
         return res.status(400).json({ error: "Title, description, and location are required" });
       }
 
-      // Skip organization validation in development mode
-      if (organizationName && process.env.NODE_ENV !== 'development') {
-        const organization = ORGANIZATIONS.find(org => org.name === organizationName);
-        if (!organization) {
-          console.error("Invalid organization name:", organizationName);
-          return res.status(400).json({ error: "Invalid organization name" });
-        }
-        
-        if (issueType && !organization.issueTypes.includes(issueType)) {
-          console.error("Organization doesn't handle issue type:", { organization: organizationName, issueType });
-          return res.status(400).json({ 
-            error: `The selected organization does not handle ${issueType} issues` 
-          });
-        }
-      }
-
-      // Create the base issue data object
-      const issueData: any = {
+      // Using userId instead of reportedBy to match security rules
+      const newIssue = {
         title,
         description,
+        imageURL: imageURL || null,
         location,
-        priority: priority || "medium",
-        issueType,
+        userId: req.firebaseUser.uid,   // Important: Changed from reportedBy to userId for rule compatibility
+        assignedTo: assignedTo || null,
         status: "open",
-        userId: uid,
-        organizationName,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        severity: severity || "medium",
+        comments: []
       };
 
-      console.log("Prepared issue data:", issueData);
-
-      // Add image URL if provided
-      if (imageUrl) {
-        issueData.imageUrl = imageUrl;
+      const issueRef = await db.collection("issues").add(newIssue);
+      
+      // If the issue is assigned to an organization, update the organization's assigned_issues array
+      if (assignedTo) {
+        const orgRef = db.collection("organizations").doc(assignedTo);
+        await orgRef.update({
+          assigned_issues: admin.firestore.FieldValue.arrayUnion(issueRef.id)
+        });
       }
 
-      // Add the issue to Firestore
-      try {
-        const docRef = await firestore.collection("issues").add(issueData);
-        console.log("Issue created with ID:", docRef.id);
-        
-        // Return the created issue data with ID
-        res.status(201).json({ id: docRef.id, ...issueData });
-      } catch (firestoreError) {
-        console.error("Firestore error:", firestoreError);
-        throw firestoreError;
-      }
+      res.status(201).json({ 
+        id: issueRef.id,
+        ...newIssue 
+      });
     } catch (error) {
       console.error("Error creating issue:", error);
       res.status(500).json({ error: "Failed to create issue" });
     }
   });
 
-  app.patch("/api/issues/:id/status", verifyToken, async (req: AuthRequest, res) => {
+  // GET /issues/:id - Get issue details
+  app.get("/api/issues/:id", verifyToken, async (req: AuthRequest, res) => {
     try {
-      const { status } = req.body;
-      const issueRef = firestore.collection("issues").doc(req.params.id);
-      const issueDoc = await issueRef.get();
-
+      const issueId = req.params.id;
+      
+      const issueDoc = await db.collection("issues").doc(issueId).get();
+      
       if (!issueDoc.exists) {
         return res.status(404).json({ error: "Issue not found" });
       }
-
-      const issueData = issueDoc.data()!;
-      if (issueData.userId !== req.firebaseUser!.uid && !req.firebaseUser!.isOrganization) {
-        return res.status(403).json({ error: "Unauthorized" });
+      
+      const issueData = issueDoc.data();
+      
+      // Fetch reporter details - use userId field instead of reportedBy
+      let reporterData = null;
+      if (issueData?.userId) {
+        const reporterDoc = await db.collection("users").doc(issueData.userId).get();
+        if (reporterDoc.exists) {
+          reporterData = {
+            uid: reporterDoc.id,
+            name: reporterDoc.data()?.name,
+            email: reporterDoc.data()?.email
+          };
+        }
       }
-
-      await issueRef.update({
-        status,
-        updatedAt: new Date()
+      
+      // Fetch organization details if assigned
+      let assignedOrgData = null;
+      if (issueData?.assignedTo) {
+        const orgDoc = await db.collection("organizations").doc(issueData.assignedTo).get();
+        if (orgDoc.exists) {
+          assignedOrgData = {
+            uid: orgDoc.id,
+            name: orgDoc.data()?.name,
+            department_type: orgDoc.data()?.department_type
+          };
+        }
+      }
+      
+      res.json({
+        id: issueDoc.id,
+        ...issueData,
+        reporter: reporterData,
+        assignedOrganization: assignedOrgData
       });
-
-      res.json({ id: issueDoc.id, ...issueData, status });
     } catch (error) {
-      console.error("Error updating issue status:", error);
-      res.status(500).json({ error: "Failed to update issue status" });
+      console.error("Error fetching issue:", error);
+      res.status(500).json({ error: "Failed to fetch issue" });
     }
   });
 
-  app.patch("/api/issues/:id/priority", verifyToken, async (req: AuthRequest, res) => {
-    try {
-      const { priority } = req.body;
-      const issueRef = firestore.collection("issues").doc(req.params.id);
-      const issueDoc = await issueRef.get();
-
-      if (!issueDoc.exists) {
-        return res.status(404).json({ error: "Issue not found" });
-      }
-
-      const issueData = issueDoc.data()!;
-      if (issueData.userId !== req.firebaseUser!.uid && !req.firebaseUser!.isOrganization) {
-        return res.status(403).json({ error: "Unauthorized" });
-      }
-
-      await issueRef.update({
-        priority,
-        updatedAt: new Date()
+  // GET /issues - Get all issues (with optional filtering)
+  app.get("/api/issues", async (req: AuthRequest, res) => {
+    // Check for authorization
+    let token: string | undefined;
+    const authHeader = req.headers.authorization;
+    
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.split("Bearer ")[1];
+    } else if (req.cookies?.token) {
+      // Also check for token in cookies
+      token = req.cookies.token;
+    }
+    
+    if (!token) {
+      console.log("Issues endpoint: No authorization token provided");
+      return res.status(401).json({ 
+        message: "Unauthorized - Please provide a valid authentication token",
+        status: 401
       });
-
-      res.json({ id: issueDoc.id, ...issueData, priority });
-    } catch (error) {
-      console.error("Error updating issue priority:", error);
-      res.status(500).json({ error: "Failed to update issue priority" });
+    }
+    
+    try {
+      // Verify the token
+      const decodedToken = await auth.verifyIdToken(token);
+      const userId = decodedToken.uid;
+      
+      // Log request details
+      console.log(`Issues API called for UID: ${userId}`);
+      console.log(`User data:`, JSON.stringify({
+        email: decodedToken.email,
+        role: decodedToken.role || "user",
+        isOrganization: decodedToken.isOrganization
+      }, null, 2));
+      
+      try {
+        const { status, severity } = req.query;
+        
+        let query = db.collection("issues");
+        
+        // Apply filters if provided
+        if (status) {
+          console.log(`Applying status filter: ${status}`);
+          query = query.where("status", "==", status.toString());
+        }
+        
+        if (severity) {
+          console.log(`Applying severity filter: ${severity}`);
+          query = query.where("severity", "==", severity.toString());
+        }
+        
+        // Sort by creation date (newest first)
+        query = query.orderBy("createdAt", "desc");
+        
+        // Log query details for debugging
+        const queryDescription = `db.collection("issues")${status ? `.where("status", "==", "${status}")` : ""}${severity ? `.where("severity", "==", "${severity}")` : ""}.orderBy("createdAt", "desc")`;
+        console.log(`Executing Firestore query: ${queryDescription}`);
+        
+        const issuesSnapshot = await query.get();
+        
+        const issues = issuesSnapshot.docs.map((doc: FirebaseFirestore.QueryDocumentSnapshot) => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        console.log(`Found ${issues.length} issues matching criteria`);
+        return res.json({
+          issues,
+          count: issues.length,
+          status: 200,
+          filters: { status, severity }
+        });
+      } catch (queryError) {
+        // Handle errors related to the Firestore query
+        console.error("Error executing Firestore query:", queryError);
+        console.error("Stack trace:", queryError instanceof Error ? queryError.stack : "No stack trace available");
+        return res.status(500).json({ 
+          message: "Server error fetching issues", 
+          status: 500 
+        });
+      }
+    } catch (authError) {
+      // Handle token verification errors
+      console.error("Authentication error:", authError);
+      console.error("Stack trace:", authError instanceof Error ? authError.stack : "No stack trace available");
+      return res.status(401).json({ 
+        message: "Invalid or expired authentication token", 
+        status: 401 
+      });
     }
   });
 
-  app.patch("/api/issues/:id/assign", verifyToken, async (req: AuthRequest, res) => {
-    try {
-      const { organizationName } = req.body;
-      const issueRef = firestore.collection("issues").doc(req.params.id);
-      const issueDoc = await issueRef.get();
-
-      if (!issueDoc.exists) {
-        return res.status(404).json({ error: "Issue not found" });
-      }
-
-      const issueData = issueDoc.data()!;
-      if (!req.firebaseUser!.isOrganization) {
-        return res.status(403).json({ error: "Unauthorized" });
-      }
-
-      await issueRef.update({
-        organizationName,
-        updatedAt: new Date()
+  // POST /issues - Create a new issue
+  app.post("/api/issues", async (req: AuthRequest, res) => {
+    // Check for authorization
+    let token: string | undefined;
+    const authHeader = req.headers.authorization;
+    
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.split("Bearer ")[1];
+    } else if (req.cookies?.token) {
+      // Also check for token in cookies
+      token = req.cookies.token;
+    }
+    
+    if (!token) {
+      console.log("Create issue endpoint: No authorization token provided");
+      return res.status(401).json({ 
+        message: "Unauthorized - Please provide a valid authentication token",
+        status: 401
       });
-
-      res.json({ id: issueDoc.id, ...issueData, organizationName });
-    } catch (error) {
-      console.error("Error assigning issue:", error);
-      res.status(500).json({ error: "Failed to assign issue" });
+    }
+    
+    try {
+      // Log incoming request data
+      console.log("POST /api/issues - Request body:", JSON.stringify(req.body, null, 2));
+      
+      // Extract required fields from request body
+      const { title, description, category, location, imageUrl } = req.body;
+      
+      // Validate required fields
+      if (!title || !description || !category) {
+        console.log("Missing required fields:", { title, description, category });
+        return res.status(400).json({
+          message: "Missing required fields: title, description, and category are required",
+          status: 400
+        });
+      }
+      
+      // Verify the token
+      const decodedToken = await auth.verifyIdToken(token);
+      const userId = decodedToken.uid;
+      
+      // Log token info
+      console.log(`Create issue API called by UID: ${userId}`);
+      console.log(`User data:`, JSON.stringify({
+        email: decodedToken.email,
+        role: decodedToken.role || "user",
+        isOrganization: decodedToken.isOrganization
+      }, null, 2));
+      
+      try {
+        // Find organizations that handle this category of issue
+        let assignedTo = null;
+        try {
+          const organizationsQuery = await db.collection("organizations")
+            .where("department_type", "==", category)
+            .limit(1)
+            .get();
+          
+          if (!organizationsQuery.empty) {
+            // Assign to the first matching organization
+            assignedTo = organizationsQuery.docs[0].id;
+            console.log(`Assigning issue to organization: ${assignedTo}`);
+          } else {
+            console.log(`No organization found that handles category: ${category}`);
+          }
+        } catch (orgError) {
+          console.error("Error finding organizations for category:", orgError);
+          // Continue without assigning if there's an error
+        }
+        
+        // Create the issue object
+        const issueData = {
+          title,
+          description,
+          category,
+          location: location || "Unknown location",
+          imageUrl: imageUrl || null,
+          status: "open",
+          severity: "medium", // Default severity
+          userId,
+          assignedTo, // This will be null if no matching organization was found
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+        
+        // Log the issue data being saved
+        console.log("Creating new issue with data:", JSON.stringify(issueData, null, 2));
+        
+        // Add the issue to Firestore
+        const issueRef = await db.collection("issues").add(issueData);
+        
+        // If the issue is assigned to an organization, update the organization's assigned_issues array
+        if (assignedTo) {
+          try {
+            const orgRef = db.collection("organizations").doc(assignedTo);
+            await orgRef.update({
+              assigned_issues: admin.firestore.FieldValue.arrayUnion(issueRef.id)
+            });
+            console.log(`Updated organization ${assignedTo} with new issue ${issueRef.id}`);
+          } catch (updateError) {
+            console.error("Error updating organization's assigned issues:", updateError);
+            // Continue even if this fails, as the issue is already created
+          }
+        }
+        
+        // Get the created issue with ID
+        const createdIssue = {
+          id: issueRef.id,
+          ...issueData,
+          // Convert server timestamps to regular dates for the response
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        
+        console.log(`Issue created successfully with ID: ${issueRef.id}`);
+        
+        // Return success response with the created issue
+        return res.status(201).json({
+          message: "Issue created successfully",
+          issue: createdIssue,
+          status: 201
+        });
+      } catch (dbError) {
+        // Handle database errors
+        console.error("Error creating issue in Firestore:", dbError);
+        console.error("Stack trace:", dbError instanceof Error ? dbError.stack : "No stack trace available");
+        
+        return res.status(500).json({
+          message: "Server error creating issue",
+          error: dbError instanceof Error ? dbError.message : "Unknown database error",
+          status: 500
+        });
+      }
+    } catch (authError) {
+      // Handle token verification errors
+      console.error("Authentication error:", authError);
+      console.error("Stack trace:", authError instanceof Error ? authError.stack : "No stack trace available");
+      
+      return res.status(401).json({
+        message: "Invalid or expired authentication token",
+        status: 401
+      });
     }
   });
 
-  // Comment routes
-  app.get("/api/issues/:id/comments", verifyToken, async (req: AuthRequest, res) => {
+  // GET /organization/issues - Get issues assigned to the requesting organization
+  app.get("/api/organization/issues", async (req: AuthRequest, res) => {
+    // Check for authorization
+    let token: string | undefined;
+    const authHeader = req.headers.authorization;
+    
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.split("Bearer ")[1];
+    } else if (req.cookies?.token) {
+      // Also check for token in cookies
+      token = req.cookies.token;
+    }
+    
+    if (!token) {
+      console.log("Organization issues endpoint: No authorization token provided");
+      return res.status(401).json({ 
+        message: "Unauthorized - Please provide a valid authentication token",
+        status: 401
+      });
+    }
+    
     try {
-      const commentsSnapshot = await firestore
-        .collection("comments")
-        .where("issueId", "==", req.params.id)
-        .orderBy("createdAt", "desc")
-        .get();
+      // Verify the token
+      const decodedToken = await auth.verifyIdToken(token);
+      const orgId = decodedToken.uid;
+      
+      // Log request details
+      console.log(`Organization issues API called for UID: ${orgId}`);
+      console.log(`User data:`, JSON.stringify({
+        email: decodedToken.email,
+        role: decodedToken.role || "user",
+        isOrganization: decodedToken.isOrganization
+      }, null, 2));
+      
+      try {
+        // Verify this is an organization account
+        const orgDoc = await db.collection("organizations").doc(orgId).get();
+        
+        if (!orgDoc.exists) {
+          console.log(`Organization document not found for UID: ${orgId}`);
+          return res.status(403).json({ 
+            message: "Access restricted to organization accounts", 
+            status: 403 
+          });
+        }
+        
+        try {
+          // Find all issues assigned to this organization
+          const queryRef = db.collection("issues")
+            .where("assignedTo", "==", orgId)
+            .orderBy("createdAt", "desc");
+          
+          // Log the query being executed
+          console.log(`Executing Firestore query: db.collection("issues").where("assignedTo", "==", "${orgId}").orderBy("createdAt", "desc")`);
+          
+          const issuesSnapshot = await queryRef.get();
+          
+          const issues = issuesSnapshot.docs.map((doc: FirebaseFirestore.QueryDocumentSnapshot) => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          
+          console.log(`Found ${issues.length} issues for organization ${orgId}`);
+          return res.json({ 
+            issues,
+            count: issues.length,
+            status: 200
+          });
+        } catch (queryError) {
+          // Handle errors related to the Firestore query
+          console.error("Error executing Firestore query:", queryError);
+          console.error("Stack trace:", queryError instanceof Error ? queryError.stack : "No stack trace available");
+          return res.status(500).json({ 
+            message: "Server error fetching organization issues", 
+            status: 500 
+          });
+        }
+      } catch (orgError) {
+        // Handle errors related to retrieving the organization document
+        console.error("Error verifying organization:", orgError);
+        console.error("Stack trace:", orgError instanceof Error ? orgError.stack : "No stack trace available");
+        return res.status(500).json({ 
+          message: "Server error verifying organization account", 
+          status: 500 
+        });
+      }
+    } catch (authError) {
+      // Handle token verification errors
+      console.error("Authentication error:", authError);
+      console.error("Stack trace:", authError instanceof Error ? authError.stack : "No stack trace available");
+      return res.status(401).json({ 
+        message: "Invalid or expired authentication token", 
+        status: 401 
+      });
+    }
+  });
 
-      const comments = commentsSnapshot.docs.map((doc: any) => ({
+  // GET /user/issues - Get issues reported by the requesting user
+  app.get("/api/user/issues", verifyToken, async (req: AuthRequest, res) => {
+    try {
+      if (!req.firebaseUser || !req.firebaseUser.uid) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      
+      const userId = req.firebaseUser.uid;
+      
+      // Verify this is a user account
+      const userDoc = await db.collection("users").doc(userId).get();
+      
+      if (!userDoc.exists) {
+        return res.status(403).json({ error: "Access restricted to user accounts" });
+      }
+      
+      // Find all issues reported by this user - use userId field instead of reportedBy
+      const query = db.collection("issues")
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc");
+      
+      const issuesSnapshot = await query.get();
+      
+      const issues = issuesSnapshot.docs.map((doc: FirebaseFirestore.QueryDocumentSnapshot) => ({
         id: doc.id,
         ...doc.data()
       }));
+      
+      res.json(issues);
+    } catch (error) {
+      console.error("Error fetching user issues:", error);
+      res.status(500).json({ error: "Failed to fetch user issues" });
+    }
+  });
 
+  // PUT /issues/:id - Update an issue
+  app.put("/api/issues/:id", verifyToken, async (req: AuthRequest, res) => {
+    try {
+      if (!req.firebaseUser || !req.firebaseUser.uid) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const issueId = req.params.id;
+      const { status, assignedTo, description, severity } = req.body;
+      
+      const issueRef = db.collection("issues").doc(issueId);
+      const issueDoc = await issueRef.get();
+      
+      if (!issueDoc.exists) {
+        return res.status(404).json({ error: "Issue not found" });
+      }
+      
+      const issueData = issueDoc.data()!;
+      
+      // Check permissions: user must be either the reporter (userId) or an organization
+      const isReporter = issueData.userId === req.firebaseUser.uid;
+      const isOrganization = req.firebaseUser.role === "organization";
+      
+      if (!isReporter && !isOrganization) {
+        return res.status(403).json({ 
+          error: "Permission denied: Only the issue reporter or an organization can update issues" 
+        });
+      }
+      
+      const updateData: any = {};
+      
+      if (status) updateData.status = status;
+      if (description) updateData.description = description;
+      if (severity) updateData.severity = severity;
+      
+      // If assignedTo is changing, we need to update organization assignments
+      if (assignedTo !== undefined && assignedTo !== issueData.assignedTo) {
+        updateData.assignedTo = assignedTo;
+        
+        // Remove from previous organization if it was assigned
+        if (issueData.assignedTo) {
+          const prevOrgRef = db.collection("organizations").doc(issueData.assignedTo);
+          await prevOrgRef.update({
+            assigned_issues: admin.firestore.FieldValue.arrayRemove(issueId)
+          });
+        }
+        
+        // Add to new organization if assigned
+        if (assignedTo) {
+          const newOrgRef = db.collection("organizations").doc(assignedTo);
+          await newOrgRef.update({
+            assigned_issues: admin.firestore.FieldValue.arrayUnion(issueId)
+          });
+        }
+      }
+      
+      await issueRef.update(updateData);
+      
+      const updatedDoc = await issueRef.get();
+      
+      res.json({
+        id: updatedDoc.id,
+        ...updatedDoc.data()
+      });
+    } catch (error) {
+      console.error("Error updating issue:", error);
+      res.status(500).json({ error: "Failed to update issue" });
+    }
+  });
+
+  // POST /issues/:id/comments - Add a comment to an issue
+  app.post("/api/issues/:id/comments", verifyToken, async (req: AuthRequest, res) => {
+    try {
+      if (!req.firebaseUser || !req.firebaseUser.uid) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+      
+      const issueId = req.params.id;
+      const { content } = req.body;
+      
+      if (!content) {
+        return res.status(400).json({ error: "Comment content is required" });
+      }
+      
+      // Create a new comment in the comments collection instead of nested in issues
+      const newComment = {
+        content,
+        userId: req.firebaseUser.uid,  // Using userId to match security rules
+        issueId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
+      };
+      
+      const commentRef = await db.collection("comments").add(newComment);
+      
+      res.status(201).json({
+        id: commentRef.id,
+        ...newComment
+      });
+    } catch (error) {
+      console.error("Error adding comment:", error);
+      res.status(500).json({ error: "Failed to add comment" });
+    }
+  });
+
+  // GET /issues/:id/comments - Get comments for an issue
+  app.get("/api/issues/:id/comments", verifyToken, async (req: AuthRequest, res) => {
+    try {
+      const issueId = req.params.id;
+      
+      // Fetch comments from separate collection
+      const commentsQuery = db.collection("comments")
+        .where("issueId", "==", issueId)
+        .orderBy("createdAt", "desc");
+      
+      const commentsSnapshot = await commentsQuery.get();
+      
+      const comments = commentsSnapshot.docs.map((doc: FirebaseFirestore.QueryDocumentSnapshot) => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
       res.json(comments);
     } catch (error) {
       console.error("Error fetching comments:", error);
@@ -589,88 +868,52 @@ export const registerRoutes = (app: express.Application) => {
     }
   });
 
-  app.post("/api/issues/:id/comments", verifyToken, async (req: AuthRequest, res) => {
+  // DELETE /issues/:issueId - Delete an issue (only by creator)
+  app.delete("/api/issues/:id", verifyToken, async (req: AuthRequest, res) => {
     try {
-      const { content } = req.body;
-      const { uid } = req.firebaseUser!;
-
-      const commentData = {
-        content,
-        userId: uid,
-        issueId: req.params.id,
-        createdAt: new Date()
-      };
-
-      const docRef = await firestore.collection("comments").add(commentData);
-      res.json({ id: docRef.id, ...commentData });
-    } catch (error) {
-      console.error("Error creating comment:", error);
-      res.status(500).json({ error: "Failed to create comment" });
-    }
-  });
-
-  // Special debug endpoint that doesn't require authentication
-  app.post("/api/debug/issues", async (req, res) => {
-    try {
-      console.log("DEBUG issue creation received:", req.body);
-      
-      const { title, description, location, issueType } = req.body;
-      
-      // Validate required fields
-      if (!title || !description) {
-        return res.status(400).json({ error: "Title and description are required" });
+      if (!req.firebaseUser || !req.firebaseUser.uid) {
+        return res.status(401).json({ error: "Unauthorized" });
       }
       
-      // Create a minimal issue with required fields
-      const issueData = {
-        title: title || "Debug Issue",
-        description: description || "This is a test issue",
-        location: location || "Test Location",
-        issueType: issueType || "Garbage Overflow",
-        status: "open",
-        userId: "debug-user",
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
+      const issueId = req.params.id;
+      const issueRef = db.collection("issues").doc(issueId);
+      const issueDoc = await issueRef.get();
       
-      console.log("Debug issue data prepared:", issueData);
+      if (!issueDoc.exists) {
+        return res.status(404).json({ error: "Issue not found" });
+      }
       
-      // Generate a mock ID for testing
-      const mockId = Math.random().toString(36).substring(2, 15);
+      // Check if the requesting user is the creator
+      if (issueDoc.data()?.userId !== req.firebaseUser.uid) {
+        return res.status(403).json({ error: "Only the issue creator can delete this issue" });
+      }
       
-      // Always return a successful mock response
-      return res.status(201).json({
-        id: mockId,
-        ...issueData,
-        debug: true,
-        mock: true,
-        message: "This is a test response - no actual database write occurred"
+      // Remove issue from any assigned organization
+      if (issueDoc.data()?.assignedTo) {
+        const orgRef = db.collection("organizations").doc(issueDoc.data()!.assignedTo);
+        await orgRef.update({
+          assigned_issues: admin.firestore.FieldValue.arrayRemove(issueId)
+        });
+      }
+      
+      // Delete all related comments
+      const commentsQuery = db.collection("comments").where("issueId", "==", issueId);
+      const commentsSnapshot = await commentsQuery.get();
+      
+      const batch = db.batch();
+      commentsSnapshot.docs.forEach((doc: FirebaseFirestore.QueryDocumentSnapshot) => {
+        batch.delete(doc.ref);
       });
+      
+      // Delete the issue itself
+      batch.delete(issueRef);
+      
+      await batch.commit();
+      
+      res.json({ message: "Issue and related comments deleted successfully" });
     } catch (error) {
-      console.error("Error in debug endpoint:", error);
-      // Even in case of error, return a success response for debugging
-      const mockId = "error-" + Math.random().toString(36).substring(2, 10);
-      return res.status(201).json({ 
-        id: mockId, 
-        title: "Mock Issue (Error Recovery)",
-        description: "This issue was created after an error occurred",
-        status: "open",
-        debug: true,
-        mock: true,
-        error: error instanceof Error ? error.message : "Unknown error"
-      });
+      console.error("Error deleting issue:", error);
+      res.status(500).json({ error: "Failed to delete issue" });
     }
   });
-
-  // Simple debug GET endpoint
-  app.get("/api/debug/test", (req, res) => {
-    console.log("Debug test endpoint accessed");
-    res.status(200).json({
-      success: true,
-      message: "Server is working correctly",
-      timestamp: new Date().toISOString()
-    });
-  });
-
-  return app;
 };

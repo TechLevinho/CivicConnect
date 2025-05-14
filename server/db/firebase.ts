@@ -1,5 +1,5 @@
 import { initializeApp, cert } from "firebase-admin/app";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
+import { getFirestore, Timestamp, FieldValue } from "firebase-admin/firestore";
 import { DatabaseAdapter, Issue, User, Comment, Organization } from "./types";
 
 export class FirebaseAdapter implements DatabaseAdapter {
@@ -24,20 +24,8 @@ export class FirebaseAdapter implements DatabaseAdapter {
     return { id: doc.id, ...data };
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const snapshot = await this.db
-      .collection("users")
-      .where("username", "==", username)
-      .limit(1)
-      .get();
-    if (snapshot.empty) return undefined;
-    const doc = snapshot.docs[0];
-    const data = doc.data() as Omit<User, "id">;
-    return { id: doc.id, ...data };
-  }
-
   async createUser(user: Omit<User, "id" | "createdAt">): Promise<User> {
-    const docRef = this.db.collection("users").doc();
+    const docRef = this.db.collection("users").doc(user.uid);
     const now = new Date();
     const userData = {
       ...user,
@@ -45,6 +33,40 @@ export class FirebaseAdapter implements DatabaseAdapter {
     };
     await docRef.set(userData);
     return { id: docRef.id, ...userData };
+  }
+
+  // Organization operations
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    const doc = await this.db.collection("organizations").doc(id).get();
+    if (!doc.exists) return undefined;
+    const data = doc.data() as Omit<Organization, "id">;
+    return { id: doc.id, ...data };
+  }
+
+  async createOrganization(org: Omit<Organization, "id" | "createdAt" | "assigned_issues">): Promise<Organization> {
+    const docRef = this.db.collection("organizations").doc(org.uid);
+    const now = new Date();
+    const orgData = {
+      ...org,
+      assigned_issues: [],
+      createdAt: now,
+    };
+    await docRef.set(orgData);
+    return { id: docRef.id, ...orgData };
+  }
+
+  async assignIssueToOrg(orgId: string, issueId: string): Promise<void> {
+    const orgRef = this.db.collection("organizations").doc(orgId);
+    await orgRef.update({
+      assigned_issues: FieldValue.arrayUnion(issueId)
+    });
+  }
+
+  async removeIssueFromOrg(orgId: string, issueId: string): Promise<void> {
+    const orgRef = this.db.collection("organizations").doc(orgId);
+    await orgRef.update({
+      assigned_issues: FieldValue.arrayRemove(issueId)
+    });
   }
 
   // Issue operations
@@ -56,7 +78,9 @@ export class FirebaseAdapter implements DatabaseAdapter {
   }
 
   async getIssues(): Promise<Issue[]> {
-    const snapshot = await this.db.collection("issues").get();
+    const snapshot = await this.db.collection("issues")
+      .orderBy("createdAt", "desc")
+      .get();
     return snapshot.docs.map((doc) => ({
       id: doc.id,
       ...(doc.data() as Omit<Issue, "id">),
@@ -67,6 +91,7 @@ export class FirebaseAdapter implements DatabaseAdapter {
     const snapshot = await this.db
       .collection("issues")
       .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
       .get();
     return snapshot.docs.map((doc) => ({
       id: doc.id,
@@ -74,10 +99,11 @@ export class FirebaseAdapter implements DatabaseAdapter {
     }));
   }
 
-  async getIssuesByOrg(orgName: string): Promise<Issue[]> {
+  async getIssuesByOrg(orgId: string): Promise<Issue[]> {
     const snapshot = await this.db
       .collection("issues")
-      .where("organizationName", "==", orgName)
+      .where("assignedTo", "==", orgId)
+      .orderBy("createdAt", "desc")
       .get();
     return snapshot.docs.map((doc) => ({
       id: doc.id,
@@ -85,52 +111,27 @@ export class FirebaseAdapter implements DatabaseAdapter {
     }));
   }
 
-  async createIssue(issue: Omit<Issue, "id" | "createdAt" | "updatedAt">): Promise<Issue> {
+  async createIssue(issue: Omit<Issue, "id" | "createdAt">): Promise<Issue> {
     const docRef = this.db.collection("issues").doc();
     const now = new Date();
     const issueData = {
       ...issue,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: now
     };
     await docRef.set(issueData);
     return { id: docRef.id, ...issueData };
   }
 
-  async updateIssueStatus(id: string, status: string): Promise<Issue> {
+  async updateIssue(id: string, data: Partial<Issue>): Promise<Issue> {
     const docRef = this.db.collection("issues").doc(id);
-    const now = new Date();
-    await docRef.update({
-      status,
-      updatedAt: now,
-    });
+    await docRef.update(data);
     const doc = await docRef.get();
-    const data = doc.data() as Omit<Issue, "id">;
-    return { id: doc.id, ...data };
+    return { id: doc.id, ...(doc.data() as Omit<Issue, "id">) };
   }
 
-  async updateIssuePriority(id: string, priority: string): Promise<Issue> {
+  async deleteIssue(id: string): Promise<void> {
     const docRef = this.db.collection("issues").doc(id);
-    const now = new Date();
-    await docRef.update({
-      priority,
-      updatedAt: now,
-    });
-    const doc = await docRef.get();
-    const data = doc.data() as Omit<Issue, "id">;
-    return { id: doc.id, ...data };
-  }
-
-  async assignIssue(id: string, orgName: string): Promise<Issue> {
-    const docRef = this.db.collection("issues").doc(id);
-    const now = new Date();
-    await docRef.update({
-      organizationName: orgName,
-      updatedAt: now,
-    });
-    const doc = await docRef.get();
-    const data = doc.data() as Omit<Issue, "id">;
-    return { id: doc.id, ...data };
+    await docRef.delete();
   }
 
   // Comment operations
@@ -150,19 +151,18 @@ export class FirebaseAdapter implements DatabaseAdapter {
     const docRef = this.db.collection("comments").doc();
     const now = new Date();
     const commentData = {
-      ...comment,
-      createdAt: now,
+      content: comment.content,
+      userId: comment.userId,
+      issueId: comment.issueId,
+      createdAt: now
     };
+    
     await docRef.set(commentData);
     return { id: docRef.id, ...commentData };
   }
 
-  // Organization operations
-  async getPredefinedOrganizations(): Promise<Organization[]> {
-    const snapshot = await this.db.collection("organizations").get();
-    return snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...(doc.data() as Omit<Organization, "id">),
-    }));
+  async deleteComment(id: string): Promise<void> {
+    const docRef = this.db.collection("comments").doc(id);
+    await docRef.delete();
   }
 } 

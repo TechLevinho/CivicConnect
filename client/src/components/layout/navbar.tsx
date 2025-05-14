@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   NavigationMenu,
@@ -8,19 +8,78 @@ import {
   navigationMenuTriggerStyle,
 } from "@/components/ui/navigation-menu";
 import { useQuery } from "@tanstack/react-query";
-import { User } from "@shared/schema";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { auth } from "../../lib/firebase";
+import { useAuth } from "../../contexts/AuthContext";
 
 export function Navbar() {
-  const { data: user, isLoading, error, refetch } = useQuery<User>({ 
-    queryKey: ["/api/auth/me"],
-    staleTime: Infinity
+  const { user: authUser, logout } = useAuth();
+  const navigate = useNavigate();
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  
+  // Get the Firebase auth token
+  useEffect(() => {
+    const getToken = async () => {
+      if (auth.currentUser) {
+        try {
+          const token = await auth.currentUser.getIdToken(true);
+          setAuthToken(token);
+        } catch (error) {
+          console.error("Error getting auth token:", error);
+        }
+      }
+    };
+    
+    getToken();
+  }, [authUser]);
+  
+  // Only fetch user data if we have authentication
+  const { data: userData, isLoading } = useQuery({ 
+    queryKey: ["/api/auth/me", authToken],
+    enabled: !!authToken,
+    staleTime: Infinity,
+    queryFn: async () => {
+      const response = await fetch("/api/auth/me", {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to fetch user data");
+      }
+      
+      return response.json();
+    }
   });
 
-  // Refetch user data when component mounts to ensure we have the latest data
-  useEffect(() => {
-    refetch();
-  }, [refetch]);
+  // Determine if user is authenticated based on both auth context and API data
+  const isAuthenticated = !!authUser && !!authToken;
+  const userInfo = userData || null;
+
+  const handleLogout = async () => {
+    try {
+      // First, call the server-side logout endpoint if token exists
+      if (authToken) {
+        await fetch("/api/auth/logout", { 
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${authToken}`
+          }
+        });
+      }
+      
+      // Then use the AuthContext logout function to sign out of Firebase
+      await logout();
+      
+      // Navigate using React Router instead of page reload
+      navigate("/auth/login");
+    } catch (error) {
+      console.error("Logout error:", error);
+      // If logout fails, still try to navigate to login
+      navigate("/auth/login");
+    }
+  };
 
   return (
     <nav className="border-b bg-white">
@@ -43,7 +102,7 @@ export function Navbar() {
                     </Link>
                   </NavigationMenuLink>
                 </NavigationMenuItem>
-                {user && !user.isOrganization && (
+                {isAuthenticated && userInfo && !userInfo.isOrganization && (
                   <NavigationMenuItem>
                     <NavigationMenuLink asChild>
                       <Link to="/user/report-issue">
@@ -59,19 +118,16 @@ export function Navbar() {
           </div>
 
           <div className="flex items-center">
-            {user ? (
+            {isAuthenticated && userInfo ? (
               <>
-                <Link to={user.isOrganization ? "/organization/dashboard" : "/user/dashboard"}>
+                <Link to={userInfo.isOrganization ? "/organization/dashboard" : "/user/dashboard"}>
                   <Button variant="ghost">
-                    {user.isOrganization ? "Organization Dashboard" : "User Dashboard"}
+                    {userInfo.isOrganization ? "Organization Dashboard" : "User Dashboard"}
                   </Button>
                 </Link>
                 <Button 
                   variant="ghost"
-                  onClick={() => {
-                    fetch("/api/auth/logout", { method: "POST" });
-                    window.location.href = "/auth/login";
-                  }}
+                  onClick={handleLogout}
                 >
                   Logout
                 </Button>
@@ -82,7 +138,12 @@ export function Navbar() {
                   <Button variant="ghost">Login</Button>
                 </Link>
                 <Link to="/auth/register">
-                  <Button variant="default" className="ml-4">Register</Button>
+                  <Button 
+                    variant="default" 
+                    className="ml-4 font-semibold shadow-md hover:shadow-lg transform transition-all duration-300 hover:-translate-y-1 button-gradient text-white"
+                  >
+                    Register
+                  </Button>
                 </Link>
               </>
             )}

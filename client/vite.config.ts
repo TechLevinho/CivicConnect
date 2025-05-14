@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 // Define server port for API
-const SERVER_PORT = 3011;
+const SERVER_PORT = 3002;
 
 // https://vitejs.dev/config/
 export default defineConfig({

@@ -7,9 +7,15 @@ import { promisify } from "util";
 import { DatabaseStorage } from "./db/storage";
 import { User as DatabaseUser } from "./db/types";
 
+// Extended user type for authentication
+interface AuthUser extends DatabaseUser {
+  password: string;
+  username: string;
+}
+
 declare global {
   namespace Express {
-    interface User extends DatabaseUser {}
+    interface User extends AuthUser {}
   }
 }
 
@@ -30,8 +36,13 @@ async function comparePasswords(supplied: string, stored: string) {
 }
 
 export function setupAuth(app: Express) {
+  const isDev = process.env.NODE_ENV !== 'production';
+  
+  // Use a default secret for development if SESSION_SECRET is not defined
+  const sessionSecret = process.env.SESSION_SECRET || 'civicconnect-dev-secret-key-12345';
+  
   const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET!,
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -44,14 +55,25 @@ export function setupAuth(app: Express) {
     app.set("trust proxy", 1);
   }
 
-  app.use(session(sessionSettings));
-  app.use(passport.initialize());
-  app.use(passport.session());
+  try {
+    app.use(session(sessionSettings));
+    app.use(passport.initialize());
+    app.use(passport.session());
+    
+    console.log("Session and Passport middleware initialized successfully");
+  } catch (error) {
+    console.error("Error initializing session middleware:", error);
+    if (isDev) {
+      console.warn("Continuing without session support in development mode");
+    } else {
+      throw error;
+    }
+  }
 
   passport.use(
     new LocalStrategy(async (username: string, password: string, done: any) => {
       try {
-        const user = await storage.getUserByUsername(username);
+        const user = await storage.getUserByUsername(username) as AuthUser;
         if (!user) {
           console.log(`Login failed: User ${username} not found`);
           return done(null, false);
@@ -117,9 +139,12 @@ export function setupAuth(app: Express) {
       const user = await storage.createUser({
         ...req.body,
         password: await hashPassword(req.body.password),
-      });
+        name: req.body.name || req.body.username,
+        uid: req.body.uid || '', // Use provided uid or empty string
+        isOrganization: req.body.isOrganization || false,
+      }) as AuthUser;
 
-      console.log('User registered successfully:', user.username);
+      console.log('User registered successfully:', user.name);
       (req as any).login(user, (err: any) => {
         if (err) {
           console.error('Login after registration failed:', err);
@@ -134,20 +159,89 @@ export function setupAuth(app: Express) {
   });
 
   app.post("/api/auth/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json((req as any).user);
-  });
-
-  app.post("/api/auth/logout", (req, res, next) => {
-    (req as any).logout((err: any) => {
-      if (err) return next(err);
-      res.sendStatus(200);
+    const user = (req as any).user;
+    
+    // Enhanced logging for user login
+    console.log("User logged in:", {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      isOrganization: user.isOrganization
+    });
+    
+    // Always check both the role and isOrganization fields
+    const isOrg = user.isOrganization === true || user.role === "organization";
+    const redirectPath = isOrg ? "/organization/dashboard" : "/user/dashboard";
+    
+    console.log(`User will be redirected to: ${redirectPath} (isOrganization: ${isOrg})`);
+    
+    res.status(200).json({
+      ...user,
+      isOrganization: isOrg, // Ensure this field is always set correctly
+      role: user.role || (isOrg ? "organization" : "user"), // Ensure role is always set
+      redirectPath // Include redirect path in the response
     });
   });
 
-  app.get("/api/auth/me", (req, res) => {
-    if (!(req as any).isAuthenticated()) {
-      return res.status(401).json({ message: "Not authenticated" });
+  app.post("/api/auth/logout", (req, res, next) => {
+    try {
+      // Handle traditional session logout if available
+      if ((req as any).logout) {
+        (req as any).logout((err: any) => {
+          if (err) {
+            console.error("Session logout error:", err);
+            // Continue anyway - we'll handle Firebase logout too
+          }
+        });
+      }
+      
+      // For Firebase, we just clear any session cookies from the server
+      // The actual token invalidation happens on the client
+      res.clearCookie('token');
+      
+      // Return success regardless - the client needs to clear local storage too
+      res.status(200).json({ 
+        message: "Logout successful", 
+        success: true 
+      });
+    } catch (error) {
+      console.error("Error in logout endpoint:", error);
+      // Even if there's an error, return success to client
+      // The client side still needs to clear tokens
+      res.status(200).json({ 
+        message: "Partial logout - client should clear tokens", 
+        success: true 
+      });
     }
-    res.json((req as any).user);
+  });
+
+  // Session-based /api/auth/me endpoint - used when Firebase auth is not available
+  app.get("/api/auth/session", (req, res) => {
+    try {
+      // Check if the session exists and user is authenticated
+      if (!(req as any).isAuthenticated || !(req as any).isAuthenticated()) {
+        console.log("Auth/session endpoint: User not authenticated");
+        return res.status(401).json({ message: "Not authenticated" });
+      }
+      
+      // Safely access user data
+      const userData = (req as any).user;
+      if (!userData) {
+        console.error("Auth/session endpoint: User authenticated but no user data in session");
+        return res.status(500).json({ message: "User session data missing" });
+      }
+      
+      // Return the user data
+      res.json(userData);
+    } catch (error) {
+      // Log the full error details
+      console.error("Error in /api/auth/session endpoint:", error);
+      if (error instanceof Error) {
+        console.error("Error stack:", error.stack);
+      }
+      
+      // Return a generic error to the client
+      res.status(500).json({ message: "Internal server error" });
+    }
   });
 }

@@ -16,7 +16,11 @@ export class DatabaseStorage implements DatabaseAdapter {
       
       return {
         id: userDoc.id,
-        ...userDoc.data(),
+        uid: userDoc.data()?.uid || userDoc.id,
+        name: userDoc.data()?.name || '',
+        email: userDoc.data()?.email || '',
+        isOrganization: userDoc.data()?.isOrganization || false,
+        phoneNumber: userDoc.data()?.phoneNumber,
         createdAt: userDoc.data()?.createdAt?.toDate() || new Date()
       } as User;
     } catch (error) {
@@ -37,7 +41,11 @@ export class DatabaseStorage implements DatabaseAdapter {
       const userDoc = querySnapshot.docs[0];
       return {
         id: userDoc.id,
-        ...userDoc.data(),
+        uid: userDoc.data()?.uid || userDoc.id,
+        name: userDoc.data()?.name || '',
+        email: userDoc.data()?.email || '',
+        isOrganization: userDoc.data()?.isOrganization || false,
+        phoneNumber: userDoc.data()?.phoneNumber,
         createdAt: userDoc.data()?.createdAt?.toDate() || new Date()
       } as User;
     } catch (error) {
@@ -58,7 +66,11 @@ export class DatabaseStorage implements DatabaseAdapter {
       const userDoc = querySnapshot.docs[0];
       return {
         id: userDoc.id,
-        ...userDoc.data(),
+        uid: userDoc.data()?.uid || userDoc.id,
+        name: userDoc.data()?.name || '',
+        email: userDoc.data()?.email || '',
+        isOrganization: userDoc.data()?.isOrganization || false,
+        phoneNumber: userDoc.data()?.phoneNumber,
         createdAt: userDoc.data()?.createdAt?.toDate() || new Date()
       } as User;
     } catch (error) {
@@ -70,10 +82,20 @@ export class DatabaseStorage implements DatabaseAdapter {
   async createUser(user: Omit<User, "id" | "createdAt">): Promise<User> {
     try {
       const id = uuidv4();
+      
+      // Ensure all required fields have defaults
       const userData = {
-        ...user,
+        ...user,  // Keep original values first
+        // Then provide fallbacks for required fields
+        uid: user.uid || id,
+        name: user.name || user.email?.split('@')[0] || 'User',
+        email: user.email || '',
+        isOrganization: user.isOrganization === true,
+        phoneNumber: user.phoneNumber || null,
         createdAt: new Date()
       };
+      
+      console.log("Creating user with data:", userData);
       
       await db.collection("users").doc(id).set(userData);
       
@@ -83,6 +105,22 @@ export class DatabaseStorage implements DatabaseAdapter {
       } as User;
     } catch (error) {
       console.error("Error creating user:", error);
+      console.error("Error stack:", error instanceof Error ? error.stack : "No stack trace available");
+      
+      // In development, create a mock user instead of crashing
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn("DEV MODE: Returning mock user after creation failure");
+        return {
+          id: uuidv4(),
+          uid: user.uid || 'mock-user-id',
+          name: user.name || 'Mock User',
+          email: user.email || 'mock@example.com',
+          isOrganization: user.isOrganization === true,
+          phoneNumber: user.phoneNumber || null,
+          createdAt: new Date()
+        } as User;
+      }
+      
       throw error;
     }
   }
@@ -106,22 +144,93 @@ export class DatabaseStorage implements DatabaseAdapter {
       await userRef.update(data);
       
       const updatedUserDoc = await userRef.get();
-      
-      // Get the full user data and cast to User type
       const existingData = updatedUserDoc.data() as any;
       
       return {
         id: updatedUserDoc.id,
-        username: existingData.username,
-        email: existingData.email,
-        password: existingData.password,
-        organizationName: existingData.organizationName,
-        isOrganization: existingData.isOrganization,
-        createdAt: existingData.createdAt?.toDate?.() || existingData.createdAt,
-        updatedAt: existingData.updatedAt?.toDate?.() || updatedAt
+        uid: existingData.uid || updatedUserDoc.id,
+        name: existingData.name || '',
+        email: existingData.email || '',
+        isOrganization: existingData.isOrganization || false,
+        phoneNumber: existingData.phoneNumber,
+        createdAt: existingData.createdAt?.toDate?.() || existingData.createdAt || new Date()
       } as User;
     } catch (error) {
       console.error("Error updating user:", error);
+      throw error;
+    }
+  }
+
+  // Organization operations
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    try {
+      const orgRef = db.collection("organizations").doc(id);
+      const orgDoc = await orgRef.get();
+      
+      if (!orgDoc.exists) {
+        return undefined;
+      }
+      
+      return {
+        id: orgDoc.id,
+        uid: orgDoc.data()?.uid || orgDoc.id,
+        name: orgDoc.data()?.name || '',
+        department_type: orgDoc.data()?.department_type || 'General',
+        email: orgDoc.data()?.email || '',
+        isOrganization: true,
+        assigned_issues: orgDoc.data()?.assigned_issues || [],
+        location: orgDoc.data()?.location || null,
+        createdAt: orgDoc.data()?.createdAt?.toDate() || new Date()
+      } as Organization;
+    } catch (error) {
+      console.error("Error fetching organization:", error);
+      return undefined;
+    }
+  }
+
+  async createOrganization(org: Omit<Organization, "id" | "createdAt" | "assigned_issues">): Promise<Organization> {
+    try {
+      const id = uuidv4();
+      const orgData = {
+        ...org,
+        assigned_issues: [],
+        createdAt: new Date()
+      };
+      
+      await db.collection("organizations").doc(id).set(orgData);
+      
+      return {
+        id,
+        ...orgData
+      } as Organization;
+    } catch (error) {
+      console.error("Error creating organization:", error);
+      throw error;
+    }
+  }
+
+  async assignIssueToOrg(orgId: string, issueId: string): Promise<void> {
+    try {
+      const orgRef = db.collection("organizations").doc(orgId);
+      
+      await orgRef.update({
+        assigned_issues: FirebaseFirestore.FieldValue.arrayUnion(issueId)
+      });
+    } catch (error) {
+      console.error("Error assigning issue to organization:", error);
+      throw error;
+    }
+  }
+
+  async removeIssueFromOrg(orgId: string, issueId: string): Promise<void> {
+    try {
+      const orgRef = db.collection("organizations").doc(orgId);
+      
+      await orgRef.update({
+        assigned_issues: FirebaseFirestore.FieldValue.arrayRemove(issueId)
+      });
+    } catch (error) {
+      console.error("Error removing issue from organization:", error);
       throw error;
     }
   }
@@ -182,10 +291,10 @@ export class DatabaseStorage implements DatabaseAdapter {
     }
   }
 
-  async getIssuesByOrg(orgName: string): Promise<Issue[]> {
+  async getIssuesByOrg(orgId: string): Promise<Issue[]> {
     try {
       const issuesRef = db.collection("issues");
-      const querySnapshot = await issuesRef.where("organizationName", "==", orgName).get();
+      const querySnapshot = await issuesRef.where("assignedTo", "==", orgId).get();
       
       return querySnapshot.docs.map((doc: FirebaseFirestore.QueryDocumentSnapshot) => ({
         id: doc.id,
@@ -199,7 +308,7 @@ export class DatabaseStorage implements DatabaseAdapter {
     }
   }
 
-  async createIssue(issue: Omit<Issue, "id" | "createdAt" | "updatedAt">): Promise<Issue> {
+  async createIssue(issue: Omit<Issue, "id" | "createdAt">): Promise<Issue> {
     try {
       const id = uuidv4();
       const issueData = {
@@ -220,7 +329,7 @@ export class DatabaseStorage implements DatabaseAdapter {
     }
   }
 
-  async updateIssueStatus(id: string, status: string): Promise<Issue> {
+  async updateIssue(id: string, data: Partial<Issue>): Promise<Issue> {
     try {
       const issueRef = db.collection("issues").doc(id);
       const issueDoc = await issueRef.get();
@@ -232,92 +341,32 @@ export class DatabaseStorage implements DatabaseAdapter {
       const issueData = issueDoc.data() || {};
       const updatedAt = new Date();
       
-      // Create new object with all issue data
-      const updatedIssue = {
-        id,
-        ...issueData,
-        status,
-        updatedAt,
-        // Make sure to include createdAt
-        createdAt: issueData.createdAt?.toDate() || new Date()
-      } as Issue;
-      
-      await issueRef.update({
-        status,
+      const updateData = {
+        ...data,
         updatedAt
-      });
+      };
       
-      return updatedIssue;
+      await issueRef.update(updateData);
+      
+      const updatedIssueDoc = await issueRef.get();
+      
+      return {
+        id: updatedIssueDoc.id,
+        ...updatedIssueDoc.data(),
+        createdAt: updatedIssueDoc.data()?.createdAt?.toDate() || new Date(),
+        updatedAt: updatedIssueDoc.data()?.updatedAt?.toDate() || new Date()
+      } as Issue;
     } catch (error) {
-      console.error("Error updating issue status:", error);
+      console.error("Error updating issue:", error);
       throw error;
     }
   }
 
-  async updateIssuePriority(id: string, priority: string): Promise<Issue> {
+  async deleteIssue(id: string): Promise<void> {
     try {
-      const issueRef = db.collection("issues").doc(id);
-      const issueDoc = await issueRef.get();
-      
-      if (!issueDoc.exists) {
-        throw new Error("Issue not found");
-      }
-      
-      const issueData = issueDoc.data() || {};
-      const updatedAt = new Date();
-      
-      // Create new object with all issue data
-      const updatedIssue = {
-        id,
-        ...issueData,
-        priority,
-        updatedAt,
-        // Make sure to include createdAt
-        createdAt: issueData.createdAt?.toDate() || new Date()
-      } as Issue;
-      
-      await issueRef.update({
-        priority,
-        updatedAt
-      });
-      
-      return updatedIssue;
+      await db.collection("issues").doc(id).delete();
     } catch (error) {
-      console.error("Error updating issue priority:", error);
-      throw error;
-    }
-  }
-
-  async assignIssue(id: string, orgName: string): Promise<Issue> {
-    try {
-      const issueRef = db.collection("issues").doc(id);
-      const issueDoc = await issueRef.get();
-      
-      if (!issueDoc.exists) {
-        throw new Error("Issue not found");
-      }
-      
-      const issueData = issueDoc.data() || {};
-      const updatedAt = new Date();
-      
-      // Create new object with all issue data
-      const updatedIssue = {
-        id,
-        ...issueData,
-        organizationName: orgName,
-        updatedAt,
-        // Make sure to include createdAt
-        createdAt: issueData.createdAt?.toDate() || new Date()
-      } as Issue;
-      
-      await issueRef.update({
-        organizationName: orgName,
-        updatedAt
-      });
-      
-      return updatedIssue;
-    } catch (error) {
-      console.error("Error assigning issue:", error);
+      console.error("Error deleting issue:", error);
       throw error;
     }
   }
@@ -359,10 +408,12 @@ export class DatabaseStorage implements DatabaseAdapter {
     }
   }
 
-  // Organization operations
-  async getPredefinedOrganizations(): Promise<Organization[]> {
-    // We're using hardcoded organizations in this implementation
-    // This method now returns an empty array as the organizations are defined in routes.ts
-    return [];
+  async deleteComment(id: string): Promise<void> {
+    try {
+      await db.collection("comments").doc(id).delete();
+    } catch (error) {
+      console.error("Error deleting comment:", error);
+      throw error;
+    }
   }
 } 

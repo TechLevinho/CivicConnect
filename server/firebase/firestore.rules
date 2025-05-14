@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+    
+    // Allow read access to users collection (for profile data)
+    match /users/{userId} {
+      allow read: if request.auth != null && (request.auth.uid == userId || request.auth.token.isOrganization == true);
+      // Allow users to create and update their own documents
+      allow create, update: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Allow organization access to their own data
+    match /organizations/{orgId} {
+      // Allow organizations to read their own data (or admins)
+      allow read: if request.auth != null && (request.auth.uid == orgId || request.auth.token.role == "admin");
+      
+      // Allow creating organization documents for own user ID - more permissive rule
+      allow create: if request.auth != null && request.auth.uid == orgId;
+      
+      // Allow updating own organization document
+      allow update: if request.auth != null && request.auth.uid == orgId;
+      
+      // Allow organizations to read/write their issues
+      match /issues/{issueId} {
+        allow read, write: if request.auth != null && request.auth.uid == orgId;
+      }
+    }
+    
+    // Allow access to issues
+    match /issues/{issueId} {
+      // Users can read any issue
+      allow read: if request.auth != null;
+      
+      // Issues can be created by any authenticated user
+      allow create: if request.auth != null;
+      
+      // Issues can be updated by creator or assigned organization
+      allow update: if request.auth != null && (
+        resource.data.userId == request.auth.uid || 
+        resource.data.assignedTo == request.auth.uid
+      );
+      
+      // Only the creator can delete their issues
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+  }
+} 

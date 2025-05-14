@@ -1,14 +1,9 @@
 import { DatabaseAdapter } from "./types";
 import { FirebaseAdapter } from "./firebase";
-import { DatabaseStorage } from "./storage";
 
-const useFirebase = process.env.DB_PROVIDER === "firebase";
-
+// Always use Firebase
 export const getDatabase = (): DatabaseAdapter => {
-  if (useFirebase) {
-    return new FirebaseAdapter();
-  }
-  return new DatabaseStorage();
+  return new FirebaseAdapter();
 };
 
 export const db = getDatabase(); 

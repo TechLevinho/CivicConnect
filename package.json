@@ -11,9 +11,6 @@
     "concurrently": "^8.2.2"
   },
   "dependencies": {
-    "drizzle-orm": "^0.41.0",
-    "drizzle-zod": "^0.7.1",
-    "pg-core": "^0.1.15",
     "tailwindcss-animate": "^1.0.7"
   }
 }

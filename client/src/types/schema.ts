@@ -1,58 +1,71 @@
-// Interface definitions for the schema types without drizzle dependencies
+// Interface definitions for Firestore collections
 export interface User {
-  id: number;
-  username: string;
+  id?: string;
+  uid: string;
+  name: string;
   email: string;
-  password: string;
-  organizationName?: string | null;
   isOrganization: boolean;
+  phoneNumber?: string | null;
+  createdAt: Date | null;
+}
+
+export interface Organization {
+  id?: string;
+  uid: string;
+  name: string;
+  department_type: string;
+  email: string;
+  isOrganization: boolean;
+  assigned_issues: string[];
+  location?: any; // GeoPoint or string
   createdAt: Date | null;
 }
 
 export interface Issue {
-  id: number;
+  id?: string;
   title: string;
   description: string;
-  location: string;
-  latitude: string | null;
-  longitude: string | null;
-  status: string | null;
-  priority: string | null;
-  userId: number;
-  organizationName: string | null;
+  imageURL?: string | null;
+  location: any; // String or GeoPoint
+  userId: string; // User uid (creator)
+  assignedTo?: string | null; // Organization uid
+  status: string;
+  severity: string;
   createdAt: Date | null;
-  updatedAt: Date | null;
 }
 
 export interface Comment {
-  id: number;
+  id?: string;
   content: string;
-  userId: number;
-  issueId: number;
+  userId: string; // User uid
+  issueId: string; // Issue id
   createdAt: Date | null;
 }
 
-export interface InsertUser {
-  username: string;
-  password: string;
+// Create/update interfaces
+export interface CreateUserInput {
+  name: string;
   email: string;
-  isOrganization?: boolean;
-  organizationName?: string;
+  phoneNumber?: string;
 }
 
-export interface InsertIssue {
+export interface CreateOrganizationInput {
+  name: string;
+  department_type: string;
+  email: string;
+  location?: any;
+}
+
+export interface CreateIssueInput {
   title: string;
   description: string;
   location: string;
-  latitude?: string;
-  longitude?: string;
-  priority?: string;
-  userId: number;
-  organizationName?: string;
+  imageURL?: string;
+  severity?: string;
+  assignedTo?: string;
 }
 
-export interface InsertComment {
+export interface CreateCommentInput {
   content: string;
-  userId: number;
-  issueId: number;
+  issueId: string;
 } 

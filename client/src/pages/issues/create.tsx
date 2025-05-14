@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { IssueApi } from "@/lib/api";
 import { 
   IssueType, 
   ISSUE_TYPES, 
@@ -16,14 +18,14 @@ import {
 export default function CreateIssue() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
-  const [latitude, setLatitude] = useState("");
-  const [longitude, setLongitude] = useState("");
-  const [priority, setPriority] = useState("medium");
+  const [imageURL, setImageURL] = useState("");
+  const [severity, setSeverity] = useState("medium");
   const [issueType, setIssueType] = useState<IssueType | "">("");
-  const [organizationName, setOrganizationName] = useState<string | null>(null);
+  const [assignedTo, setAssignedTo] = useState<string | null>(null);
   const [filteredOrganizations, setFilteredOrganizations] = useState<Organization[]>([]);
 
   // Update organizations list when issue type changes
@@ -31,7 +33,7 @@ export default function CreateIssue() {
     if (issueType) {
       setFilteredOrganizations(getOrganizationsByIssueType(issueType as IssueType));
       // Clear selected organization when issue type changes
-      setOrganizationName(null);
+      setAssignedTo(null);
     } else {
       setFilteredOrganizations([]);
     }
@@ -39,35 +41,27 @@ export default function CreateIssue() {
 
   // Create issue mutation
   const createIssueMutation = useMutation({
-    mutationFn: async (issueData: {
+    mutationFn: (issueData: {
       title: string;
       description: string;
       location: string;
-      latitude: string;
-      longitude: string;
-      priority: string;
-      issueType: string;
-      organizationName: string | null;
+      imageURL?: string;
+      severity: string;
+      assignedTo?: string | null;
     }) => {
-      const response = await fetch("/api/issues", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(issueData),
-      });
-      if (!response.ok) throw new Error("Failed to create issue");
-      return response.json();
+      return IssueApi.createIssue(issueData);
     },
     onSuccess: () => {
       toast({
         title: "Success",
-        description: "Issue created successfully",
+        description: "Issue reported successfully",
       });
-      navigate("/issues");
+      navigate("/user/issues");
     },
     onError: (error) => {
       toast({
         title: "Error",
-        description: error.message,
+        description: error instanceof Error ? error.message : "Failed to report issue",
         variant: "destructive",
       });
     },
@@ -75,6 +69,15 @@ export default function CreateIssue() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!user) {
+      toast({
+        title: "Error",
+        description: "You must be logged in to report an issue",
+        variant: "destructive"
+      });
+      return;
+    }
 
     if (!issueType) {
       toast({
@@ -89,17 +92,15 @@ export default function CreateIssue() {
       title,
       description,
       location,
-      latitude,
-      longitude,
-      priority,
-      issueType,
-      organizationName,
+      imageURL: imageURL || undefined,
+      severity,
+      assignedTo,
     });
   };
 
   return (
     <div className="container mx-auto py-8">
-      <h1 className="text-2xl font-bold mb-6">Create New Issue</h1>
+      <h1 className="text-2xl font-bold mb-6">Report New Issue</h1>
       <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
         <div>
           <label className="block text-sm font-medium mb-2">Title</label>
@@ -132,23 +133,13 @@ export default function CreateIssue() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">Latitude</label>
-            <Input
-              value={latitude}
-              onChange={(e) => setLatitude(e.target.value)}
-              placeholder="Enter latitude"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">Longitude</label>
-            <Input
-              value={longitude}
-              onChange={(e) => setLongitude(e.target.value)}
-              placeholder="Enter longitude"
-            />
-          </div>
+        <div>
+          <label className="block text-sm font-medium mb-2">Image URL (Optional)</label>
+          <Input
+            value={imageURL}
+            onChange={(e) => setImageURL(e.target.value)}
+            placeholder="Enter image URL if available"
+          />
         </div>
 
         <div>
@@ -171,10 +162,10 @@ export default function CreateIssue() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-2">Priority</label>
-          <Select value={priority} onValueChange={setPriority}>
+          <label className="block text-sm font-medium mb-2">Severity</label>
+          <Select value={severity} onValueChange={setSeverity}>
             <SelectTrigger>
-              <SelectValue placeholder="Select priority" />
+              <SelectValue placeholder="Select severity" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="low">Low</SelectItem>
@@ -187,8 +178,8 @@ export default function CreateIssue() {
         <div>
           <label className="block text-sm font-medium mb-2">Assign to Organization</label>
           <Select 
-            value={organizationName || ""} 
-            onValueChange={(value) => setOrganizationName(value || null)}
+            value={assignedTo || ""} 
+            onValueChange={(value) => setAssignedTo(value || null)}
             disabled={!issueType || filteredOrganizations.length === 0}
           >
             <SelectTrigger>
@@ -201,23 +192,25 @@ export default function CreateIssue() {
               } />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="">None</SelectItem>
               {filteredOrganizations.map((org) => (
-                <SelectItem key={org.id} value={org.name}>
+                <SelectItem key={org.id} value={org.id}>
                   {org.name}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          {issueType && (
-            <p className="text-sm text-gray-500 mt-1">
-              Only organizations that handle {ISSUE_TYPES.find(t => t.id === issueType)?.label.toLowerCase()} are shown
-            </p>
-          )}
         </div>
 
-        <Button type="submit" disabled={createIssueMutation.isPending}>
-          {createIssueMutation.isPending ? "Creating..." : "Create Issue"}
-        </Button>
+        <div className="pt-4">
+          <Button 
+            type="submit" 
+            className="w-full"
+            disabled={createIssueMutation.isPending}
+          >
+            {createIssueMutation.isPending ? "Submitting..." : "Report Issue"}
+          </Button>
+        </div>
       </form>
     </div>
   );
